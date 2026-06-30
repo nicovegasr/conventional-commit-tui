@@ -288,6 +288,7 @@ func TestCommitStagesSelectedAndFormatsSubject(t *testing.T) {
 func TestCommitStageErrorIsReported(t *testing.T) {
 	m, repo := sampleModel()
 	repo.stageErr = errors.New("stage failed")
+	m.message = "algo" // c.go is pre-staged; give it a message so the guard passes
 
 	_, cmd := send(m, "enter")
 	done := cmd().(commitDoneMsg)
@@ -325,15 +326,42 @@ func TestCommitSuccessRefreshesAndStaysOpen(t *testing.T) {
 	}
 }
 
-func TestCommitFailureKeepsOpenWithError(t *testing.T) {
+func TestCommitFailureKeepsOpenWithFlash(t *testing.T) {
 	m, _ := sampleModel()
 	next, cmd := m.Update(commitDoneMsg{err: errors.New("nope")})
 	em := next.(Model)
-	if em.err == nil {
-		t.Error("failed commit should set err")
+	if em.err != nil {
+		t.Error("a failed commit must NOT set the fatal err (it would tear down the UI)")
+	}
+	if em.flash == "" {
+		t.Error("failed commit should surface a flash")
 	}
 	if cmd != nil {
 		t.Error("failed commit should not return a command")
+	}
+}
+
+func TestEnterWithoutStagedFilesShowsHint(t *testing.T) {
+	m, _ := sampleModel()
+	m.staged = map[string]bool{} // unmark the pre-staged file: nothing to commit
+	m.message = "algo"
+	next, cmd := send(m, "enter")
+	if cmd != nil {
+		t.Error("enter with nothing marked must not run a commit")
+	}
+	if next.flash == "" {
+		t.Error("enter with nothing marked should show a hint flash")
+	}
+}
+
+func TestEnterWithEmptyMessageShowsHint(t *testing.T) {
+	m, _ := sampleModel() // c.go is pre-staged, message empty
+	next, cmd := send(m, "enter")
+	if cmd != nil {
+		t.Error("enter with an empty message must not run a commit")
+	}
+	if next.flash == "" {
+		t.Error("enter with an empty message should show a hint flash")
 	}
 }
 

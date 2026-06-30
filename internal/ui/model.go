@@ -129,8 +129,10 @@ func (m Model) Init() tea.Cmd { return m.loadLog() }
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case commitDoneMsg:
+		// A failed commit must never tear down the minimal flow (ADR-0007): show
+		// it inline and keep the session open so the user can fix and retry.
 		if msg.err != nil {
-			m.err = msg.err
+			m.flash = "✗ no se pudo commitear"
 			return m, nil
 		}
 		// Persistent session (ADR-0007): refresh state, never quit.
@@ -138,8 +140,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.flash = "✓ commit creado"
 		files, err := m.repo.Status()
 		if err != nil {
-			m.err = err
-			return m, nil
+			m.flash = "✓ commit creado · no se pudo refrescar la lista"
+			return m, m.loadLog()
 		}
 		m.files = files
 		m.staged = map[string]bool{}
@@ -209,7 +211,7 @@ func (m Model) updateFiles(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		return m, tea.Quit
 	case "enter":
-		return m, m.commit()
+		return m.attemptCommit()
 	}
 	return m, nil
 }
@@ -276,7 +278,7 @@ func (m Model) updateMessage(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab":
 		m.focus = zoneType
 	case "enter":
-		return m, m.commit()
+		return m.attemptCommit()
 	case "backspace":
 		if m.message != "" {
 			m.message = m.message[:len(m.message)-1]
@@ -340,6 +342,21 @@ func (m Model) stagedFiles() []string {
 		}
 	}
 	return files
+}
+
+// attemptCommit guards the enter key: it refuses to commit with nothing marked
+// or an empty message, surfacing a hint instead of failing. This keeps `enter`
+// safe and never lets a no-op collapse the flow.
+func (m Model) attemptCommit() (Model, tea.Cmd) {
+	if len(m.stagedFiles()) == 0 {
+		m.flash = "marca al menos un archivo (espacio)"
+		return m, nil
+	}
+	if strings.TrimSpace(m.message) == "" {
+		m.flash = "escribe un mensaje antes de commitear"
+		return m, nil
+	}
+	return m, m.commit()
 }
 
 // commit stages the selected files and creates the commit, reporting the
