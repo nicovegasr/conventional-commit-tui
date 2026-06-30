@@ -395,9 +395,16 @@ func (m Model) leftColWidth() int {
 
 const reservedBelow = 4 // blank + commit line + blank + help line under the band
 
-// logRows is how many rows the log column may fill, derived from terminal height.
+// logRows is how many rows the log column may fill. It is derived from the
+// terminal height and MUST leave room for everything drawn below the band —
+// including the open dropdown — plus a one-row safety margin. If the whole frame
+// ever exceeds the terminal height, Bubble Tea cannot clear it cleanly: the
+// dropdown ghosts and mouse clicks land on the wrong rows.
 func (m Model) logRows() int {
-	r := m.height - headerRows - reservedBelow
+	r := m.height - headerRows - reservedBelow - 1 // -1: never fill the last row
+	if m.dropOpen {
+		r -= len(commit.Types) // the open dropdown needs its own rows below the commit line
+	}
 	if r < 0 {
 		return 0
 	}
