@@ -1,5 +1,28 @@
 # nib — roadmap & design decisions
 
+## Current direction — repository history analysis
+
+The product direction is temporal repository analysis: persistent history,
+historical relationships and evidence for change impact. The original TUI roadmap below is historical context, not the
+current implementation priority.
+
+The first analytical slice implements `nib index [--rebuild]` and
+`nib coupled <file> [--json]`: local persistence, incremental DAG ingestion,
+file co-change, explicit eligibility filters and inspectable commit evidence.
+See ADR-0008 for semantics and limitations.
+
+Next milestones:
+
+1. Measure real repositories at increasing sizes and profile ingestion/query costs.
+2. Evaluate held-out historical changes with chronological training boundaries;
+   report baseline comparisons, precision/recall and false-positive behaviour.
+3. Add file history/churn/ownership queries, then decide symbol identity and
+   extraction semantics before implementing symbol relationships.
+4. Expose validated evidence to agents and eventually PR workflows. Risk scores
+   require an operational definition and historical validation first.
+
+## Original commit-TUI roadmap
+
 Decisions locked in a design session (2026-06-25). This file is the source of
 truth so a fresh Claude session (or you, in a month) doesn't re-debate them.
 

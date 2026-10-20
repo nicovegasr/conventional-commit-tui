@@ -5,7 +5,10 @@ go 1.22
 // Run `go mod tidy` once Go is installed to populate go.sum and transitive deps.
 require github.com/charmbracelet/bubbletea v0.27.1
 
-require github.com/charmbracelet/lipgloss v0.13.0
+require (
+	github.com/charmbracelet/lipgloss v0.13.0
+	go.etcd.io/bbolt v1.3.11
+)
 
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
