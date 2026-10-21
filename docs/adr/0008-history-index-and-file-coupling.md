@@ -45,6 +45,11 @@ must demonstrate useful file relationships before symbols or risk scores.
   observations and effective filters. Sort by shared count, then path.
 - Return bounded commit evidence per relationship plus exact shared counts.
   Coupling describes historical co-change, not dependency or proven risk.
+- Read optional root `.nibignore` rules at query time. Filter matching candidate
+  paths before ranking, preserve the eligible source-commit denominator, and
+  reject a query whose source path is ignored. Ignore changes need no reindex.
+  The format supports basename globs and literal directory names ending in `/`;
+  it intentionally does not claim full `.gitignore` syntax.
 
 ## Consequences
 

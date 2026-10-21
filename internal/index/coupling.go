@@ -7,16 +7,21 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/nicovegasr/nib-git/internal/pathignore"
 	bolt "go.etcd.io/bbolt"
 )
 
 // Options defines the eligible population and output bounds.
 type Options struct {
-	MinSupport int `json:"min_support"`
-	MaxFiles   int `json:"max_files"`
-	Limit      int `json:"limit"`
-	Evidence   int `json:"evidence_limit"`
+	MinSupport int      `json:"min_support"`
+	MaxFiles   int      `json:"max_files"`
+	Limit      int      `json:"limit"`
+	Evidence   int      `json:"evidence_limit"`
+	Ignore     []string `json:"ignore_patterns,omitempty"`
 }
+
+// ErrIgnoredPath indicates that a query's source is excluded by .nibignore.
+var ErrIgnoredPath = errors.New("path is excluded by .nibignore")
 
 // DefaultOptions suppresses single-observation and mass-change relationships.
 func DefaultOptions() Options { return Options{MinSupport: 3, MaxFiles: 50, Limit: 10, Evidence: 5} }
@@ -68,6 +73,9 @@ func (s *Store) Coupled(ctx context.Context, path string, opts Options) (Report,
 	if err := opts.Validate(); err != nil {
 		return r, err
 	}
+	if pathignore.Matches(path, opts.Ignore) {
+		return r, ErrIgnoredPath
+	}
 	err := s.db.View(func(tx *bolt.Tx) error {
 		m, err := metadata(tx)
 		if err != nil {
@@ -93,7 +101,11 @@ func (s *Store) Coupled(ctx context.Context, path string, opts Options) (Report,
 			}
 			r.Eligible++
 			for _, f := range c.Files {
-				if f.FileID != sourceID {
+				if f.FileID == sourceID {
+					continue
+				}
+				candidatePath := string(bucket(tx, "paths").Get(key(f.FileID)))
+				if !pathignore.Matches(candidatePath, opts.Ignore) {
 					observe(candidates, f.FileID, c, opts.Evidence)
 				}
 			}

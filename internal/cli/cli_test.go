@@ -26,12 +26,14 @@ func TestInvalidCommands(t *testing.T) {
 	}
 }
 func TestReportShowsDenominatorAndEscapesPaths(t *testing.T) {
-	r := index.Report{Path: "A\nB", Eligible: 4, Excluded: 2, Options: index.DefaultOptions(), Relationships: []index.Relationship{{Path: "C", Shared: 3, Ratio: 0.75, Evidence: []index.Evidence{{OID: "abc", Subject: "change\n"}}}}}
+	opts := index.DefaultOptions()
+	opts.Ignore = []string{"*.lock", "dist/"}
+	r := index.Report{Path: "A\nB", Eligible: 4, Excluded: 2, Options: opts, Relationships: []index.Relationship{{Path: "C", Shared: 3, Ratio: 0.75, Evidence: []index.Evidence{{OID: "abc", Subject: "change\n"}}}}}
 	var out bytes.Buffer
 	if err := renderReport(&out, r); err != nil {
 		t.Fatal(err)
 	}
-	for _, part := range []string{`"A\nB"`, "75.0%  3/4", "Excluded: 2", "abc"} {
+	for _, part := range []string{`"A\nB"`, "75.0%  3/4", "Excluded: 2", "Ignored paths: *.lock, dist/", "abc"} {
 		if !strings.Contains(out.String(), part) {
 			t.Errorf("missing %q: %s", part, out.String())
 		}

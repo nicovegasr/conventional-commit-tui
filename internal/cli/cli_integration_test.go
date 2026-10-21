@@ -91,6 +91,39 @@ func TestRealGitIncrementalMatchesRebuild(t *testing.T) {
 		t.Fatalf("%+v", updated)
 	}
 }
+
+func TestRealGitNibignoreFiltersCandidatesWithoutReindexing(t *testing.T) {
+	dir := repo(t)
+	for i := 0; i < 2; i++ {
+		content := "first\n"
+		if i > 0 {
+			content = "second\n"
+		}
+		write(t, dir, "A", content)
+		write(t, dir, "B", content)
+		write(t, dir, "package-lock.json", content)
+		commit(t, dir)
+	}
+	var indexed index.Result
+	runJSON(t, dir, []string{"index", "--json"}, &indexed)
+
+	var before index.Report
+	runJSON(t, dir, []string{"coupled", "A", "--min-support", "1", "--json"}, &before)
+	if len(before.Relationships) != 2 || before.Eligible != 2 {
+		t.Fatalf("unfiltered report = %+v", before)
+	}
+	write(t, dir, ".nibignore", "# generated dependency metadata\npackage-lock.json\n")
+
+	var after index.Report
+	runJSON(t, dir, []string{"coupled", "A", "--min-support", "1", "--json"}, &after)
+	if after.Eligible != before.Eligible || after.Relationships[0].Path != "B" || len(after.Relationships) != 1 || !reflect.DeepEqual(after.Options.Ignore, []string{"package-lock.json"}) {
+		t.Fatalf("filtered report = %+v", after)
+	}
+	if err := Run(context.Background(), dir, []string{"coupled", "package-lock.json", "--min-support", "1"}, &bytes.Buffer{}); !errors.Is(err, index.ErrIgnoredPath) {
+		t.Fatalf("ignored source error = %v", err)
+	}
+}
+
 func TestRealGitRenameBinaryAndSpecialPaths(t *testing.T) {
 	dir := repo(t)
 	old := "old\tname\n.txt"

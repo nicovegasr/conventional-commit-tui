@@ -86,6 +86,24 @@ func TestGoldenDirectionalEvidence(t *testing.T) {
 		t.Fatalf("%+v", c)
 	}
 }
+
+func TestCoupledIgnoreFiltersCandidatesWithoutChangingDenominator(t *testing.T) {
+	s := openStore(t)
+	if _, err := s.Update(context.Background(), golden(), false); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{MinSupport: 1, MaxFiles: 50, Limit: 10, Evidence: 0, Ignore: []string{"B"}}
+	report, err := s.Coupled(context.Background(), "A", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Eligible != 4 || len(report.Relationships) != 1 || report.Relationships[0].Path != "C" {
+		t.Fatalf("ignored candidate changed the source population or remained ranked: %+v", report)
+	}
+	if _, err := s.Coupled(context.Background(), "B", opts); !errors.Is(err, ErrIgnoredPath) {
+		t.Fatalf("ignored source error = %v, want %v", err, ErrIgnoredPath)
+	}
+}
 func TestIncrementalEqualsRebuildAndIdempotent(t *testing.T) {
 	s := openStore(t)
 	src := golden()

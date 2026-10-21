@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/nicovegasr/nib-git/internal/history"
 	"github.com/nicovegasr/nib-git/internal/index"
+	"github.com/nicovegasr/nib-git/internal/pathignore"
 )
 
 const usage = `Usage:
@@ -28,7 +30,8 @@ Coupled options:
   --evidence N        Commit examples per relationship, 0..100 (default 5)
 
 Paths are relative to the repository root. Coupling is historical frequency,
-not dependency or a risk prediction. Run nib index again after HEAD changes.
+not dependency or a risk prediction. .nibignore filters related paths at query
+time; changing it does not require reindexing. Run nib index after HEAD changes.
 `
 
 // Run dispatches analytical commands from dir. No command starts the TUI here.
@@ -128,6 +131,11 @@ func runCoupled(ctx context.Context, dir string, args []string, out io.Writer) e
 }
 
 func query(ctx context.Context, repo history.Repository, file string, opts index.Options) (index.Report, error) {
+	ignored, err := pathignore.Load(filepath.Join(repo.Root, ".nibignore"))
+	if err != nil {
+		return index.Report{}, err
+	}
+	opts.Ignore = ignored
 	store, err := index.Open(repo.IndexPath(), true)
 	if err != nil {
 		return index.Report{}, err
@@ -148,7 +156,12 @@ func helpError(err error) error {
 
 func renderReport(out io.Writer, r index.Report) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Historical co-change: %q\nSnapshot: %s\nEligible commits: %d · Excluded: %d\nFilters: support >= %d, paths/commit <= %d\n\n", r.Path, r.Head, r.Eligible, r.Excluded, r.Options.MinSupport, r.Options.MaxFiles)
+	fmt.Fprintf(&b, "Historical co-change: %q\nSnapshot: %s\nEligible commits: %d · Excluded: %d\nFilters: support >= %d, paths/commit <= %d\n", r.Path, r.Head, r.Eligible, r.Excluded, r.Options.MinSupport, r.Options.MaxFiles)
+	if len(r.Options.Ignore) == 0 {
+		b.WriteString("Ignored paths: none\n\n")
+	} else {
+		fmt.Fprintf(&b, "Ignored paths: %s\n\n", strings.Join(r.Options.Ignore, ", "))
+	}
 	if len(r.Relationships) == 0 {
 		b.WriteString("No relationships meet these filters.\n")
 	}

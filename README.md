@@ -21,6 +21,23 @@ including when invoked from a subdirectory. Use `nib --help` for all options.
 After building, the binary can also be invoked by absolute path from another
 repository; no repository contents are uploaded.
 
+Create a `.nibignore` at the repository root to omit noisy paths from related
+file results. It uses one basename glob or directory name per line; blank lines
+and `#` comments are ignored. For example:
+
+```gitignore
+*.lock
+*-lock.yaml
+package-lock.json
+dist/
+packages/generated/
+```
+
+Directory names ending in `/` match that directory at any depth. Ignore rules
+filter candidate relationships without changing the source-file denominator;
+the source path itself cannot be ignored. Changes take effect immediately and
+do not require rebuilding the history index.
+
 ## What the first analytical slice does
 
 - Persists commit metadata and file changes in the current worktree's Git
