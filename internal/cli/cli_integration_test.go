@@ -228,3 +228,30 @@ func TestRealGitWorktreeIsolationAndShallowRejection(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+func TestRealGitEvaluateHoldsOutCommits(t *testing.T) {
+	dir := repo(t)
+	for i := range 6 {
+		write(t, dir, "A", strings.Repeat("a", i+1))
+		write(t, dir, "B", strings.Repeat("b", i+1))
+		commit(t, dir)
+	}
+	if err := Run(context.Background(), dir, []string{"evaluate"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("evaluated without an index")
+	}
+	runJSON(t, dir, []string{"index", "--json"}, &index.Result{})
+
+	var e index.Evaluation
+	runJSON(t, dir, []string{"evaluate", "--stride", "1", "--min-support", "1", "--json"}, &e)
+	// The root only adds files; each later commit modifies A and B together.
+	if e.Sampled != 6 || len(e.Cases) != 5 || e.Skipped.NoSource != 1 {
+		t.Fatalf("%+v", e)
+	}
+	nib := e.Predictors[0]
+	if nib.Name != index.PredictorNib || nib.Metrics[0].Hits != 5 || nib.Metrics[0].Precision != 1 {
+		t.Fatalf("perfect co-change must be predicted at k=1: %+v", nib)
+	}
+	var text bytes.Buffer
+	if err := Run(context.Background(), dir, []string{"evaluate", "--stride", "1"}, &text); err != nil || !strings.Contains(text.String(), "Cases: 5 of 6") {
+		t.Fatalf("%v\n%s", err, text.String())
+	}
+}

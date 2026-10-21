@@ -13,11 +13,11 @@ See ADR-0008 for semantics and limitations.
 
 Next milestones:
 
-1. Expand the exploratory held-out evaluation across a larger sample and another
-   repository; `nib coupled --before <oid>` supplies the strict-ancestor query
-   boundary. Compare against global-frequency and source-conditioned baselines,
-   and report precision/recall, coverage and false positives before claiming
-   analytical usefulness.
+1. ~~Reproducible held-out evaluation~~ — `nib evaluate` (ADR-0009). First
+   preregistered run on three repositories: source conditioning beats global
+   frequency, but Nib's default filters lose to unfiltered co-change. Next:
+   evaluate support/size thresholds separately before changing defaults, and
+   add repositories.
 2. Measure real repositories at increasing sizes and profile ingestion/query costs.
    Initial Astro smoke completed; repeat under controlled conditions and include
    another repository size before making capacity claims.

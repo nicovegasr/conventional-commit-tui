@@ -90,34 +90,48 @@ func (s *Store) Coupled(ctx context.Context, path string, opts Options) (Report,
 		if fid == nil {
 			return errors.New("path has no indexed history (paths are repository-relative; renames remain separate)")
 		}
-		sourceID := binary.BigEndian.Uint64(fid)
 		ancestors, err := ancestorsBefore(ctx, tx, opts.Before)
 		if err != nil {
 			return err
 		}
-		candidates := map[uint64]*candidate{}
-		err = postings(tx, fid, func(c storedCommit) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if !isBeforeCutoff(c, ancestors) {
-				return nil
-			}
-			if !eligibleObservation(c, opts) {
-				r.Excluded++
-				return nil
-			}
-			r.Eligible++
-			collectCandidates(tx, sourceID, c, opts, candidates)
-			return nil
-		})
+		obs, err := observeSource(ctx, tx, fid, opts, ancestors)
 		if err != nil {
 			return err
 		}
-		r.Relationships = rankRelationships(tx, candidates, r.Eligible, opts)
+		r.Eligible, r.Excluded = obs.eligible, obs.excluded
+		r.Relationships = rankRelationships(tx, obs.candidates, r.Eligible, opts)
 		return nil
 	})
 	return r, err
+}
+
+// sourceObservations are the co-changes seen across one source's postings.
+type sourceObservations struct {
+	eligible, excluded int
+	candidates         map[uint64]*candidate
+}
+
+// observeSource scans the source's postings, restricted to ancestors when the
+// set is non-nil.
+func observeSource(ctx context.Context, tx *bolt.Tx, fid []byte, opts Options, ancestors map[string]struct{}) (sourceObservations, error) {
+	obs := sourceObservations{candidates: map[uint64]*candidate{}}
+	sourceID := binary.BigEndian.Uint64(fid)
+	err := postings(tx, fid, func(c storedCommit) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !isBeforeCutoff(c, ancestors) {
+			return nil
+		}
+		if !eligibleObservation(c, opts) {
+			obs.excluded++
+			return nil
+		}
+		obs.eligible++
+		collectCandidates(tx, sourceID, c, opts, obs.candidates)
+		return nil
+	})
+	return obs, err
 }
 
 func eligibleObservation(c storedCommit, opts Options) bool {
@@ -151,19 +165,22 @@ func ancestorsBefore(ctx context.Context, tx *bolt.Tx, cutoff string) (map[strin
 	if cutoff == "" {
 		return nil, nil
 	}
-	cutoffID := bucket(tx, "oids").Get([]byte(cutoff))
-	if cutoffID == nil {
+	cutoffCommit, err := commitByOID(tx, cutoff)
+	if err != nil {
 		return nil, errors.New("cutoff commit is not in the indexed history")
 	}
-	cutoffCommit, err := readCommit(tx, cutoffID)
-	if err != nil {
-		return nil, err
-	}
 	seen := make(map[string]struct{})
-	stack := append([]string(nil), cutoffCommit.Parents...)
+	return seen, extendAncestors(ctx, tx, seen, cutoffCommit.Parents, func(storedCommit) {})
+}
+
+// extendAncestors adds to seen every commit reachable from parents that it
+// does not hold yet, reporting each newly seen commit to visit. Growing one set
+// along a first-parent chain therefore traverses the history only once.
+func extendAncestors(ctx context.Context, tx *bolt.Tx, seen map[string]struct{}, parents []string, visit func(storedCommit)) error {
+	stack := append([]string(nil), parents...)
 	for len(stack) > 0 {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return err
 		}
 		last := len(stack) - 1
 		oid := stack[last]
@@ -171,18 +188,15 @@ func ancestorsBefore(ctx context.Context, tx *bolt.Tx, cutoff string) (map[strin
 		if _, ok := seen[oid]; ok {
 			continue
 		}
-		id := bucket(tx, "oids").Get([]byte(oid))
-		if id == nil {
-			return nil, errors.New("cutoff ancestry is incomplete in the index")
-		}
-		commit, err := readCommit(tx, id)
+		commit, err := commitByOID(tx, oid)
 		if err != nil {
-			return nil, err
+			return errors.New("cutoff ancestry is incomplete in the index")
 		}
 		seen[oid] = struct{}{}
+		visit(commit)
 		stack = append(stack, commit.Parents...)
 	}
-	return seen, nil
+	return nil
 }
 
 func rankRelationships(tx *bolt.Tx, candidates map[uint64]*candidate, eligible int, opts Options) []Relationship {

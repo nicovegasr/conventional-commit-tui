@@ -21,6 +21,7 @@ const usage = `Usage:
   nib                                     Open the existing commit TUI
   nib index [--rebuild] [--json]            Index history reachable from HEAD
   nib coupled <file> [options]             Explain historical file co-change
+  nib evaluate [options]                   Score coupling on held-out commits
 
 Coupled options:
   --json              Emit a machine-readable report
@@ -29,6 +30,15 @@ Coupled options:
   --limit N           Maximum relationships (default 10)
   --evidence N        Commit examples per relationship, 0..100 (default 5)
   --before REV        Use strict ancestors of this commit only (OID, tag, HEAD~3)
+
+Evaluate options (ADR-0009):
+  --json              Emit the report with every case and prediction
+  --window N          Latest first-parent commits to sample from (default 400)
+  --stride N          Hold out every N-th of them (default 3)
+  --prefix P          Only pick sources under this path prefix
+  --ext .a,.b         Only pick sources with these extensions
+  --min-support N     As in coupled (default 3)
+  --max-files N       As in coupled (default 50)
 
 Paths are relative to the repository root. Coupling is historical frequency,
 not dependency or a risk prediction. .nibignore filters related paths at query
@@ -48,6 +58,8 @@ func Run(ctx context.Context, dir string, args []string, out io.Writer) error {
 		return runIndex(ctx, dir, args[1:], out)
 	case "coupled":
 		return runCoupled(ctx, dir, args[1:], out)
+	case "evaluate":
+		return runEvaluate(ctx, dir, args[1:], out)
 	default:
 		return fmt.Errorf("unknown command %q; run nib --help", args[0])
 	}
@@ -162,21 +174,75 @@ func runCoupled(ctx context.Context, dir string, args []string, out io.Writer) e
 	return renderReport(out, report)
 }
 
-func query(ctx context.Context, repo history.Repository, file string, opts index.Options) (index.Report, error) {
-	ignored, err := pathignore.Load(filepath.Join(repo.Root, ".nibignore"))
+func runEvaluate(ctx context.Context, dir string, args []string, out io.Writer) error {
+	opts := index.DefaultEvalOptions()
+	fs := flags("evaluate", out)
+	asJSON := fs.Bool("json", false, "Emit JSON")
+	extensions := fs.String("ext", "", "Comma-separated source extensions")
+	fs.IntVar(&opts.Window, "window", opts.Window, "Latest first-parent commits to sample from")
+	fs.IntVar(&opts.Stride, "stride", opts.Stride, "Hold out every N-th commit")
+	fs.StringVar(&opts.Prefix, "prefix", "", "Source path prefix")
+	fs.IntVar(&opts.MinSupport, "min-support", opts.MinSupport, "Minimum shared eligible commits")
+	fs.IntVar(&opts.MaxFiles, "max-files", opts.MaxFiles, "Maximum paths per eligible commit")
+	positional, err := parseArgs(fs, args)
 	if err != nil {
-		return index.Report{}, err
+		return helpError(err)
 	}
-	opts.Ignore = ignored
+	if len(positional) != 0 {
+		return errors.New("usage: nib evaluate [options]")
+	}
+	if *extensions != "" {
+		opts.Extensions = strings.Split(*extensions, ",")
+	}
+	if err = opts.Validate(); err != nil {
+		return err
+	}
+	repo, err := history.Open(ctx, dir)
+	if err != nil {
+		return err
+	}
+	var evaluation index.Evaluation
+	err = withFreshIndex(repo, func(store *index.Store, ignore []string) error {
+		opts.Ignore = ignore
+		var evalErr error
+		evaluation, evalErr = store.Evaluate(ctx, opts)
+		return evalErr
+	})
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		return json.NewEncoder(out).Encode(evaluation)
+	}
+	return renderEvaluation(out, evaluation)
+}
+
+func query(ctx context.Context, repo history.Repository, file string, opts index.Options) (index.Report, error) {
+	var report index.Report
+	err := withFreshIndex(repo, func(store *index.Store, ignore []string) error {
+		opts.Ignore = ignore
+		var err error
+		report, err = store.Coupled(ctx, file, opts)
+		return err
+	})
+	return report, err
+}
+
+// withFreshIndex opens the index read-only, rejects a stale or foreign
+// snapshot and passes the current .nibignore rules to read.
+func withFreshIndex(repo history.Repository, read func(*index.Store, []string) error) error {
+	ignore, err := pathignore.Load(filepath.Join(repo.Root, ".nibignore"))
+	if err != nil {
+		return err
+	}
 	store, err := index.Open(repo.IndexPath(), true)
 	if err != nil {
-		return index.Report{}, err
+		return err
 	}
 	if err = store.Check(repo.Identity(), repo.Head); err != nil {
-		return index.Report{}, errors.Join(err, store.Close())
+		return errors.Join(err, store.Close())
 	}
-	report, queryErr := store.Coupled(ctx, file, opts)
-	return report, errors.Join(queryErr, store.Close())
+	return errors.Join(read(store, ignore), store.Close())
 }
 
 func helpError(err error) error {
@@ -204,6 +270,28 @@ func renderReport(out io.Writer, r index.Report) error {
 		}
 	}
 	b.WriteString("\nHistorical co-change does not establish dependency or predict regressions.\n")
+	_, err := io.WriteString(out, b.String())
+	return err
+}
+
+func renderEvaluation(out io.Writer, e index.Evaluation) error {
+	var b strings.Builder
+	o := e.Options
+	fmt.Fprintf(&b, "Held-out evaluation · snapshot %s\n", e.Head)
+	fmt.Fprintf(&b, "Sample: every %d of the latest %d first-parent commits", o.Stride, o.Window)
+	if o.Prefix != "" || len(o.Extensions) > 0 {
+		fmt.Fprintf(&b, " · sources %q %s", o.Prefix, strings.Join(o.Extensions, ","))
+	}
+	fmt.Fprintf(&b, "\nCases: %d of %d sampled · skipped: %d merges, %d by size, %d without source, %d without targets\n", len(e.Cases), e.Sampled, e.Skipped.Merges, e.Skipped.Size, e.Skipped.NoSource, e.Skipped.NoTargets)
+	fmt.Fprintf(&b, "Filters: support >= %d, paths/commit <= %d\n\n", o.MinSupport, o.MaxFiles)
+	fmt.Fprintf(&b, "%-10s %4s %6s %6s %10s %8s %9s\n", "predictor", "k", "hits", "fp", "precision", "recall", "coverage")
+	for _, p := range e.Predictors {
+		for _, m := range p.Metrics {
+			fmt.Fprintf(&b, "%-10s %4d %6d %6d %9.1f%% %7.1f%% %8.1f%%\n", p.Name, m.K, m.Hits, m.FalsePositives, m.Precision*100, m.Recall*100, m.Coverage*100)
+		}
+	}
+	b.WriteString("\nnib = coupled with filters · cochange = unfiltered co-change · frequency = global file frequency.\n")
+	b.WriteString("One repository's sample is evidence to report, not a general claim (ADR-0009).\n")
 	_, err := io.WriteString(out, b.String())
 	return err
 }

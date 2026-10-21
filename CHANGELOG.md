@@ -28,6 +28,10 @@ later goal — ADR-0004.)
 
 ### Added
 
+- `nib evaluate`: reproducible held-out evaluation of file coupling against
+  unfiltered co-change and global-frequency baselines, with precision, recall,
+  coverage and false positives at k = 1, 3, 5, 10 (ADR-0009).
+
 - Persistent session: a successful commit refreshes the working tree (no
   auto-quit) instead of closing the app (ADR-0007).
 - Git-log panel (Phase 3): optional read-only right-side log, auto-hidden under
