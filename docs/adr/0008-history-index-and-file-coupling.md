@@ -47,6 +47,12 @@ must demonstrate useful file relationships before symbols or risk scores.
   observations and effective filters. Sort by shared count, then path.
 - Return bounded commit evidence per relationship plus exact shared counts.
   Coupling describes historical co-change, not dependency or proven risk.
+- Allow `nib coupled --before <oid>` to restrict observations to strict
+  ancestors of an indexed commit. The cutoff commit and its descendants are
+  excluded, so a later change can be held out without temporal leakage. The
+  indexed snapshot must still match repository HEAD; the option is an analysis
+  boundary, not a partial-index selector. Ancestors are followed through the
+  stored commit DAG, not inferred from author timestamps or insertion IDs.
 - Read optional root `.nibignore` rules at query time. Filter matching candidate
   paths before ranking, preserve the eligible source-commit denominator, and
   reject a query whose source path is ignored. Ignore changes need no reindex.

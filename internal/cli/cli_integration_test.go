@@ -77,6 +77,12 @@ func TestRealGitIncrementalMatchesRebuild(t *testing.T) {
 	var before, after index.Report
 	args := []string{"coupled", "A", "--min-support", "1", "--json"}
 	runJSON(t, dir, args, &before)
+	var heldOut index.Report
+	cutoff := git(t, dir, "rev-parse", "HEAD")
+	runJSON(t, dir, []string{"coupled", "A", "--before", cutoff, "--min-support", "1", "--json"}, &heldOut)
+	if heldOut.Eligible != 1 || len(heldOut.Relationships) != 1 || heldOut.Relationships[0].Shared != 1 || heldOut.Options.Before != cutoff {
+		t.Fatalf("cutoff commit leaked into historical query: %+v", heldOut)
+	}
 	runJSON(t, dir, []string{"index", "--rebuild", "--json"}, &updated)
 	runJSON(t, dir, args, &after)
 	if !reflect.DeepEqual(before, after) || before.Eligible != 2 || before.Relationships[0].Shared != 2 {
@@ -174,6 +180,12 @@ func TestRealGitMergeImportsSideBranchOnce(t *testing.T) {
 	runJSON(t, dir, []string{"coupled", "A", "--min-support", "1", "--json"}, &report)
 	if report.Eligible != 2 || report.Relationships[0].Shared != 1 || report.Relationships[0].Ratio != 0.5 {
 		t.Fatalf("%+v", report)
+	}
+	mergeOID := git(t, dir, "rev-parse", "HEAD")
+	var historical index.Report
+	runJSON(t, dir, []string{"coupled", "A", "--before", mergeOID, "--min-support", "1", "--json"}, &historical)
+	if historical.Eligible != 2 || historical.Relationships[0].Path != "B" || historical.Relationships[0].Shared != 1 {
+		t.Fatalf("strict merge ancestors = %+v", historical)
 	}
 	var before index.Report
 	runJSON(t, dir, []string{"coupled", "A", "--min-support", "1", "--json"}, &before)

@@ -14,6 +14,7 @@ make build
 ./nib index
 ./nib coupled internal/inventory/service.go
 ./nib coupled internal/inventory/service.go --min-support 2 --json
+./nib coupled internal/inventory/service.go --before <commit-oid>
 ```
 
 Run inside the repository to analyze. File arguments are relative to its root,
@@ -37,6 +38,10 @@ Directory names ending in `/` match that directory at any depth. Ignore rules
 filter candidate relationships without changing the source-file denominator;
 the source path itself cannot be ignored. Changes take effect immediately and
 do not require rebuilding the history index.
+
+Use `--before <commit-oid>` to query only commits that are strict ancestors of
+an indexed commit. This supports historical comparisons without including the
+cutoff commit or later changes; the index must still be current at `HEAD`.
 
 ## What the first analytical slice does
 

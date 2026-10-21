@@ -87,6 +87,41 @@ func TestGoldenDirectionalEvidence(t *testing.T) {
 	}
 }
 
+func TestCoupledBeforeUsesStrictCommitAncestors(t *testing.T) {
+	s := openStore(t)
+	src := golden()
+	for i := 1; i < len(src.commits); i++ {
+		src.commits[i].Parents = []string{src.commits[i-1].OID}
+	}
+	if _, err := s.Update(context.Background(), src, false); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{MinSupport: 1, MaxFiles: 50, Limit: 10, Evidence: 10, Before: src.commits[4].OID}
+	report, err := s.Coupled(context.Background(), "A", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Eligible != 3 || len(report.Relationships) != 1 || report.Relationships[0].Path != "B" || report.Relationships[0].Shared != 2 {
+		t.Fatalf("cutoff commit or its future were included: %+v", report)
+	}
+	for _, evidence := range report.Relationships[0].Evidence {
+		if evidence.OID == src.commits[4].OID {
+			t.Fatalf("cutoff commit leaked into evidence: %+v", report.Relationships[0].Evidence)
+		}
+	}
+}
+
+func TestCoupledBeforeRequiresIndexedCommit(t *testing.T) {
+	s := openStore(t)
+	if _, err := s.Update(context.Background(), golden(), false); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{MinSupport: 1, MaxFiles: 50, Limit: 10, Before: "unknown"}
+	if _, err := s.Coupled(context.Background(), "A", opts); err == nil || err.Error() != "cutoff commit is not in the indexed history" {
+		t.Fatalf("unexpected cutoff error: %v", err)
+	}
+}
+
 func TestCoupledIgnoreFiltersCandidatesWithoutChangingDenominator(t *testing.T) {
 	s := openStore(t)
 	if _, err := s.Update(context.Background(), golden(), false); err != nil {

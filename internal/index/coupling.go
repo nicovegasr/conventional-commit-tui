@@ -17,6 +17,7 @@ type Options struct {
 	MaxFiles   int      `json:"max_files"`
 	Limit      int      `json:"limit"`
 	Evidence   int      `json:"evidence_limit"`
+	Before     string   `json:"before,omitempty"`
 	Ignore     []string `json:"ignore_patterns,omitempty"`
 }
 
@@ -90,26 +91,24 @@ func (s *Store) Coupled(ctx context.Context, path string, opts Options) (Report,
 			return errors.New("path has no indexed history (paths are repository-relative; renames remain separate)")
 		}
 		sourceID := binary.BigEndian.Uint64(fid)
+		ancestors, err := ancestorsBefore(ctx, tx, opts.Before)
+		if err != nil {
+			return err
+		}
 		candidates := map[uint64]*candidate{}
 		err = postings(tx, fid, func(c storedCommit) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if len(c.Parents) > 1 || len(c.Files) > opts.MaxFiles {
+			if !isBeforeCutoff(c, ancestors) {
+				return nil
+			}
+			if !eligibleObservation(c, opts) {
 				r.Excluded++
 				return nil
 			}
 			r.Eligible++
-			for _, f := range c.Files {
-				if f.FileID == sourceID {
-					continue
-				}
-				candidatePath := string(bucket(tx, "paths").Get(key(f.FileID)))
-				if !pathignore.Matches(candidatePath, opts.Ignore) {
-					observe(candidates, f.FileID, c, opts.Evidence)
-				}
-			}
-			return nil
+			return collectCandidates(tx, sourceID, c, opts, candidates)
 		})
 		if err != nil {
 			return err
@@ -118,6 +117,72 @@ func (s *Store) Coupled(ctx context.Context, path string, opts Options) (Report,
 		return nil
 	})
 	return r, err
+}
+
+func eligibleObservation(c storedCommit, opts Options) bool {
+	return len(c.Parents) <= 1 && len(c.Files) <= opts.MaxFiles
+}
+
+func collectCandidates(tx *bolt.Tx, sourceID uint64, c storedCommit, opts Options, candidates map[uint64]*candidate) error {
+	for _, f := range c.Files {
+		if f.FileID == sourceID {
+			continue
+		}
+		candidatePath := string(bucket(tx, "paths").Get(key(f.FileID)))
+		if !pathignore.Matches(candidatePath, opts.Ignore) {
+			observe(candidates, f.FileID, c, opts.Evidence)
+		}
+	}
+	return nil
+}
+
+func isBeforeCutoff(c storedCommit, ancestors map[string]struct{}) bool {
+	if ancestors == nil {
+		return true
+	}
+	_, ok := ancestors[c.OID]
+	return ok
+}
+
+// ancestorsBefore returns the strict ancestor set of a cutoff commit. The
+// cutoff itself is excluded so its changed files remain suitable for holdout
+// evaluation.
+func ancestorsBefore(ctx context.Context, tx *bolt.Tx, cutoff string) (map[string]struct{}, error) {
+	if cutoff == "" {
+		return nil, nil
+	}
+	cutoffID := bucket(tx, "oids").Get([]byte(cutoff))
+	if cutoffID == nil {
+		return nil, errors.New("cutoff commit is not in the indexed history")
+	}
+	cutoffCommit, err := readCommit(tx, cutoffID)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{})
+	stack := append([]string(nil), cutoffCommit.Parents...)
+	for len(stack) > 0 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		last := len(stack) - 1
+		oid := stack[last]
+		stack = stack[:last]
+		if _, ok := seen[oid]; ok {
+			continue
+		}
+		id := bucket(tx, "oids").Get([]byte(oid))
+		if id == nil {
+			return nil, errors.New("cutoff ancestry is incomplete in the index")
+		}
+		commit, err := readCommit(tx, id)
+		if err != nil {
+			return nil, err
+		}
+		seen[oid] = struct{}{}
+		stack = append(stack, commit.Parents...)
+	}
+	return seen, nil
 }
 
 func rankRelationships(tx *bolt.Tx, candidates map[uint64]*candidate, eligible int, opts Options) []Relationship {

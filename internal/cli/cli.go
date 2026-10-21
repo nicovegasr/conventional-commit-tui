@@ -28,6 +28,7 @@ Coupled options:
   --max-files N       Exclude commits changing more than N files (default 50)
   --limit N           Maximum relationships (default 10)
   --evidence N        Commit examples per relationship, 0..100 (default 5)
+  --before OID        Use strict ancestors of this indexed commit only
 
 Paths are relative to the repository root. Coupling is historical frequency,
 not dependency or a risk prediction. .nibignore filters related paths at query
@@ -107,6 +108,7 @@ func runCoupled(ctx context.Context, dir string, args []string, out io.Writer) e
 	fs.IntVar(&opts.MaxFiles, "max-files", opts.MaxFiles, "Maximum paths per eligible commit")
 	fs.IntVar(&opts.Limit, "limit", opts.Limit, "Maximum relationships")
 	fs.IntVar(&opts.Evidence, "evidence", opts.Evidence, "Maximum commit examples")
+	fs.StringVar(&opts.Before, "before", "", "Use strict ancestors of this indexed commit only")
 	if err := fs.Parse(args[1:]); err != nil {
 		return helpError(err)
 	}
