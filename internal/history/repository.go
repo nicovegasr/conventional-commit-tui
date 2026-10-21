@@ -22,10 +22,15 @@ func command(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	return cmd
 }
 
+// output returns stdout only: a warning on stderr must never be parsed as an
+// OID or a path. stderr explains a failure.
 func output(ctx context.Context, dir string, args ...string) (string, error) {
-	out, err := command(ctx, dir, args...).CombinedOutput()
+	var stderr bytes.Buffer
+	cmd := command(ctx, dir, args...)
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSuffix(string(out), "\n"), nil
 }
@@ -68,6 +73,19 @@ func (r Repository) Identity() string { return r.GitDir }
 
 // Revision is the captured immutable HEAD.
 func (r Repository) Revision() string { return r.Head }
+
+// ResolveCommit turns any revision (abbreviated OID, tag, HEAD~3) into the
+// full commit OID the index stores.
+func (r Repository) ResolveCommit(ctx context.Context, revision string) (string, error) {
+	if strings.HasPrefix(revision, "-") {
+		return "", fmt.Errorf("invalid revision %q", revision)
+	}
+	oid, err := output(ctx, r.Root, "rev-parse", "--verify", revision+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("resolve %q: %w", revision, err)
+	}
+	return oid, nil
+}
 
 // IsAncestor distinguishes divergent history from command failures.
 func (r Repository) IsAncestor(ctx context.Context, oid string) (bool, error) {

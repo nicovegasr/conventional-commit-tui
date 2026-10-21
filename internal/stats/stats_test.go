@@ -47,11 +47,11 @@ func TestCountByTypeIgnoresBlankLines(t *testing.T) {
 	}
 }
 
-func TestDays2since(t *testing.T) {
+func TestSince(t *testing.T) {
 	cases := map[int]string{0: "30 days ago", -5: "30 days ago", 7: "7 days ago", 30: "30 days ago"}
 	for in, want := range cases {
-		if got := days2since(in); got != want {
-			t.Errorf("days2since(%d) = %q, want %q", in, got, want)
+		if got := since(in); got != want {
+			t.Errorf("since(%d) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -72,5 +72,12 @@ func TestByTypeUsesStubbedLog(t *testing.T) {
 	gitLogSubjects = func(_ int) (string, error) { return "", errors.New("boom") }
 	if _, err := ByType(30); err == nil {
 		t.Error("expected error to propagate")
+	}
+}
+
+func TestCountByTypeBreaksTiesByType(t *testing.T) {
+	got := countByType("fix: a.\nfeat: b.\n")
+	if got[0].Type != "feat" || got[1].Type != "fix" {
+		t.Errorf("ties must be ordered by type, got %+v", got)
 	}
 }

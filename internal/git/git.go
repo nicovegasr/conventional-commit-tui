@@ -3,7 +3,10 @@
 package git
 
 import (
+	"bytes"
+	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -14,30 +17,37 @@ type FileChange struct {
 	Staged bool
 }
 
-// Status returns the working-tree changes via `git status --porcelain`.
+// Status returns the working-tree changes via `git status --porcelain -z`.
 func Status() ([]FileChange, error) {
-	out, err := run("status", "--porcelain")
+	out, err := run("status", "--porcelain", "-z")
 	if err != nil {
 		return nil, err
 	}
+	return parseStatus(out), nil
+}
+
+// parseStatus reads NUL-separated porcelain v1 entries ("XY path"). Paths are
+// verbatim (no quoting), and a rename or copy is followed by its original path,
+// which is skipped: staging the new path is what the commit flow needs.
+func parseStatus(out string) []FileChange {
 	var changes []FileChange
-	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
-		if len(line) < 4 {
+	entries := strings.Split(out, "\x00")
+	for i := 0; i < len(entries); i++ {
+		entry := entries[i]
+		if len(entry) < 4 {
 			continue
 		}
-		x, y := line[0], line[1]
-		path := strings.TrimSpace(line[3:])
-		st := rune(x)
-		if st == ' ' {
-			st = rune(y)
+		x, y := entry[0], entry[1]
+		if x == 'R' || x == 'C' {
+			i++
 		}
-		changes = append(changes, FileChange{
-			Path:   path,
-			Status: st,
-			Staged: x != ' ' && x != '?',
-		})
+		status := rune(x)
+		if status == ' ' {
+			status = rune(y)
+		}
+		changes = append(changes, FileChange{Path: entry[3:], Status: status, Staged: x != ' ' && x != '?'})
 	}
-	return changes, nil
+	return changes
 }
 
 // Stage stages exactly the given files (replaces the old `git add .`).
@@ -62,7 +72,7 @@ func Log(scope string, limit int) (string, error) {
 		args = append(args, "--all", "--graph")
 	}
 	if limit > 0 {
-		args = append(args, "-n", itoa(limit))
+		args = append(args, "-n", strconv.Itoa(limit))
 	}
 	return run(args...)
 }
@@ -70,18 +80,21 @@ func Log(scope string, limit int) (string, error) {
 // run executes git with the given args. It is a package var so tests can stub
 // the shell-out and exercise the parsing without a real repository.
 var run = func(args ...string) (string, error) {
-	out, err := exec.Command("git", args...).Output()
-	return string(out), err
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command("git", args...)
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return "", failure(args[0], err, stdout.String(), stderr.String())
+	}
+	return stdout.String(), nil
 }
 
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
+// failure carries git's own explanation (a rejecting hook, "nothing to
+// commit"), which goes to stderr or stdout depending on the command.
+func failure(subcommand string, err error, stdout, stderr string) error {
+	reason := strings.TrimSpace(stderr)
+	if reason == "" {
+		reason = strings.TrimSpace(stdout)
 	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
+	return fmt.Errorf("git %s: %w: %s", subcommand, err, reason)
 }

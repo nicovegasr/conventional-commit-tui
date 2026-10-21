@@ -83,6 +83,11 @@ func TestRealGitIncrementalMatchesRebuild(t *testing.T) {
 	if heldOut.Eligible != 1 || len(heldOut.Relationships) != 1 || heldOut.Relationships[0].Shared != 1 || heldOut.Options.Before != cutoff {
 		t.Fatalf("cutoff commit leaked into historical query: %+v", heldOut)
 	}
+	var abbreviated index.Report
+	runJSON(t, dir, []string{"coupled", "--json", "--before", "HEAD", "--min-support", "1", "A"}, &abbreviated)
+	if !reflect.DeepEqual(abbreviated, heldOut) {
+		t.Fatalf("a symbolic cutoff with leading flags must match the full OID: %+v", abbreviated)
+	}
 	runJSON(t, dir, []string{"index", "--rebuild", "--json"}, &updated)
 	runJSON(t, dir, args, &after)
 	if !reflect.DeepEqual(before, after) || before.Eligible != 2 || before.Relationships[0].Shared != 2 {

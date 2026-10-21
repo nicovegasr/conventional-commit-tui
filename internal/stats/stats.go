@@ -9,6 +9,7 @@ package stats
 import (
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -21,26 +22,27 @@ type TypeCount struct {
 // ByType counts commits per conventional-commit type over the last `days`
 // days on the current branch. Commits whose subject has no "type:" prefix are
 // grouped under "other".
+//
+// TODO(timeline): commits/day or per-week trend.
+// TODO(authors): --author breakdown.
 func ByType(days int) ([]TypeCount, error) {
 	out, err := gitLogSubjects(days)
 	if err != nil {
 		return nil, err
 	}
 	return countByType(out), nil
-	// TODO(timeline): commits/day or per-week trend.
-	// TODO(authors): --author breakdown.
 }
 
 // gitLogSubjects returns one commit subject per line. It is a package var so
 // tests can stub the shell-out and exercise countByType directly.
 var gitLogSubjects = func(days int) (string, error) {
 	out, err := exec.Command("git", "log",
-		"--since", days2since(days), "--pretty=format:%s").Output()
+		"--since", since(days), "--pretty=format:%s").Output()
 	return string(out), err
 }
 
 // countByType tallies conventional-commit types from newline-separated
-// subjects, sorted by descending count.
+// subjects, sorted by descending count, then by type.
 func countByType(out string) []TypeCount {
 	counts := map[string]int{}
 	for _, subject := range strings.Split(out, "\n") {
@@ -54,7 +56,13 @@ func countByType(out string) []TypeCount {
 	for t, c := range counts {
 		result = append(result, TypeCount{Type: t, Count: c})
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Count > result[j].Count })
+	sort.Slice(result, func(i, j int) bool {
+		a, b := result[i], result[j]
+		if a.Count != b.Count {
+			return a.Count > b.Count
+		}
+		return a.Type < b.Type
+	})
 	return result
 }
 
@@ -74,14 +82,10 @@ func typeOf(subject string) string {
 	return "other"
 }
 
-func days2since(d int) string {
-	if d <= 0 {
-		d = 30
+// since formats a git --since window, defaulting to 30 days.
+func since(days int) string {
+	if days <= 0 {
+		days = 30
 	}
-	n := ""
-	for d > 0 {
-		n = string(byte('0'+d%10)) + n
-		d /= 10
-	}
-	return n + " days ago"
+	return strconv.Itoa(days) + " days ago"
 }

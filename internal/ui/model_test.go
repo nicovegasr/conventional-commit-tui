@@ -337,7 +337,7 @@ func TestCommitFailureKeepsOpenWithFlash(t *testing.T) {
 		t.Error("failed commit should surface a flash")
 	}
 	if cmd != nil {
-		t.Error("failed commit should not return a command")
+		t.Error("failed commit should not reload the unchanged log")
 	}
 }
 
@@ -613,5 +613,74 @@ func TestMouseWheelNavigatesOpenDropdown(t *testing.T) {
 	wheel(tea.MouseButtonWheelUp)
 	if m.dropIdx != 1 {
 		t.Errorf("wheel up -> dropIdx %d, want 1", m.dropIdx)
+	}
+}
+
+func TestCommitFailureShowsGitReasonAndKeepsMessage(t *testing.T) {
+	m, repo := sampleModel()
+	m.message = "algo"
+	repo.status = []git.FileChange{{Path: "a.go", Status: 'M', Staged: true}}
+
+	next, _ := m.Update(commitDoneMsg{err: errors.New("git commit: exit status 1: running hooks\nlint failed")})
+	em := next.(Model)
+
+	if em.flash != "✗ lint failed" {
+		t.Errorf("flash = %q, want the hook's verdict", em.flash)
+	}
+	if em.message != "algo" {
+		t.Errorf("message = %q, a failure must keep it for the retry", em.message)
+	}
+	if !em.staged["a.go"] || len(em.files) != 1 {
+		t.Errorf("a failure must refresh what git already staged, got %+v", em.files)
+	}
+}
+
+func TestCommitRefreshFailureIsReported(t *testing.T) {
+	m, repo := sampleModel()
+	repo.statusErr = errors.New("boom")
+	next, _ := m.Update(commitDoneMsg{})
+	if got := next.(Model).flash; got != "✓ commit creado · no se pudo refrescar la lista" {
+		t.Errorf("flash = %q", got)
+	}
+}
+
+func TestRefreshKeepsCursorInsideShorterList(t *testing.T) {
+	m, repo := sampleModel()
+	m.cursor = 2
+	repo.status = []git.FileChange{{Path: "left.go", Status: 'M'}}
+	next, _ := m.Update(commitDoneMsg{})
+	if got := next.(Model).cursor; got != 0 {
+		t.Errorf("cursor = %d, want 0", got)
+	}
+}
+
+func TestMessageAcceptsNonASCIIAndBackspacesByRune(t *testing.T) {
+	m, _ := sampleModel()
+	m.focus = zoneMessage
+	for _, k := range []string{"a", "ñ", "space", "á"} {
+		m, _ = send(m, k)
+	}
+	if m.message != "añ á" {
+		t.Fatalf("message = %q, want %q", m.message, "añ á")
+	}
+	m, _ = send(m, "backspace")
+	if m.message != "añ " {
+		t.Errorf("backspace left %q, want %q", m.message, "añ ")
+	}
+}
+
+func TestPasteBecomesOneLine(t *testing.T) {
+	m, _ := sampleModel()
+	m.focus = zoneMessage
+	m, _ = send(m, "line one\nline two")
+	if m.message != "line one line two" {
+		t.Errorf("message = %q", m.message)
+	}
+}
+
+func TestNewStartsWithLogLoading(t *testing.T) {
+	m, _ := sampleModel()
+	if !m.logLoading {
+		t.Error("the log is fetched by Init, so the panel must start as loading")
 	}
 }

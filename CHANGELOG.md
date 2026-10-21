@@ -7,6 +7,25 @@ later goal — ADR-0004.)
 
 ## [Unreleased]
 
+### Fixed
+
+- A failed commit now shows git's reason (e.g. a rejecting pre-commit hook),
+  keeps the message for a retry and refreshes what git already staged.
+- The commit message accepts non-ASCII input (ñ, accents, emoji, pastes) and
+  backspace removes a whole character.
+- `git status` paths with spaces, quotes or renames are staged verbatim
+  (`--porcelain -z`).
+- Git warnings on stderr can no longer corrupt indexed OIDs or repository paths.
+- The log panel shows "cargando…" until its first fetch completes.
+
+### Changed
+
+- `nib coupled` accepts flags before or after the file, and `--before` any
+  revision (abbreviated OID, tag, `HEAD~3`).
+- `/audit` reuses the `.nibignore` matcher and reports a malformed
+  `.auditignore` instead of ignoring it. `/audit` and `/stats` break ties
+  deterministically.
+
 ### Added
 
 - Persistent session: a successful commit refreshes the working tree (no

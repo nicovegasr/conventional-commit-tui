@@ -16,7 +16,7 @@ func stubRun(t *testing.T, fn func(args ...string) (string, error)) {
 
 func TestStatusParsesPorcelain(t *testing.T) {
 	stubRun(t, func(_ ...string) (string, error) {
-		return " M internal/git/git.go\nA  main.go\n?? new.txt\nMM both.go\n", nil
+		return " M internal/git/git.go\x00A  main.go\x00?? new.txt\x00MM both.go\x00R  docs/new name.md\x00docs/old name.md\x00", nil
 	})
 
 	got, err := Status()
@@ -29,6 +29,7 @@ func TestStatusParsesPorcelain(t *testing.T) {
 		{Path: "main.go", Status: 'A', Staged: true},
 		{Path: "new.txt", Status: '?', Staged: false},
 		{Path: "both.go", Status: 'M', Staged: true},
+		{Path: "docs/new name.md", Status: 'R', Staged: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Status() = %+v, want %+v", got, want)
@@ -36,7 +37,7 @@ func TestStatusParsesPorcelain(t *testing.T) {
 }
 
 func TestStatusSkipsShortLines(t *testing.T) {
-	stubRun(t, func(_ ...string) (string, error) { return "xy\n M ok.go\n", nil })
+	stubRun(t, func(_ ...string) (string, error) { return "xy\x00 M ok.go\x00", nil })
 	got, err := Status()
 	if err != nil {
 		t.Fatal(err)
@@ -119,11 +120,15 @@ func TestLogBuildsArgsByScope(t *testing.T) {
 	}
 }
 
-func TestItoa(t *testing.T) {
-	cases := map[int]string{0: "0", 5: "5", 42: "42", 100: "100"}
-	for in, want := range cases {
-		if got := itoa(in); got != want {
-			t.Errorf("itoa(%d) = %q, want %q", in, got, want)
+func TestFailurePrefersStderrThenStdout(t *testing.T) {
+	cause := errors.New("exit status 1")
+	cases := map[string]error{
+		"git commit: exit status 1: hook said no":      failure("commit", cause, "ignored", " hook said no\n"),
+		"git commit: exit status 1: nothing to commit": failure("commit", cause, "nothing to commit\n", ""),
+	}
+	for want, got := range cases {
+		if got.Error() != want || !errors.Is(got, cause) {
+			t.Errorf("failure = %q, want %q wrapping the cause", got, want)
 		}
 	}
 }

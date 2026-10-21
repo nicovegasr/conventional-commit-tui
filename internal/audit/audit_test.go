@@ -33,25 +33,7 @@ func TestRankAppliesIgnore(t *testing.T) {
 	}
 }
 
-func TestIsIgnored(t *testing.T) {
-	patterns := []string{"*.lock", "node_modules/", "dist/"}
-	cases := map[string]bool{
-		"yarn.lock":             true,
-		"deep/path/pnpm.lock":   true,
-		"node_modules/react.js": true,
-		"a/node_modules/x.js":   true,
-		"dist/bundle.js":        true,
-		"src/app.go":            false,
-		"distinct/keep.go":      false, // "dist/" must not match "distinct/"
-	}
-	for path, want := range cases {
-		if got := isIgnored(path, patterns); got != want {
-			t.Errorf("isIgnored(%q) = %v, want %v", path, got, want)
-		}
-	}
-}
-
-func TestLoadAuditIgnoreReadsFile(t *testing.T) {
+func TestLoadIgnoreReadsFile(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".auditignore"),
 		[]byte("# comment\n\nvendor/\n*.gen.go\n"), 0o644); err != nil {
@@ -59,7 +41,10 @@ func TestLoadAuditIgnoreReadsFile(t *testing.T) {
 	}
 	chdir(t, dir)
 
-	got := loadAuditIgnore()
+	got, err := loadIgnore()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !contains(got, "vendor/") || !contains(got, "*.gen.go") {
 		t.Errorf("custom patterns missing: %v", got)
 	}
@@ -68,29 +53,41 @@ func TestLoadAuditIgnoreReadsFile(t *testing.T) {
 	}
 }
 
-func TestLoadAuditIgnoreFallsBackToDefaults(t *testing.T) {
+func TestLoadIgnoreFallsBackToDefaults(t *testing.T) {
 	chdir(t, t.TempDir()) // no .auditignore present
-	got := loadAuditIgnore()
+	got, err := loadIgnore()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != len(defaultIgnore) {
 		t.Errorf("expected only defaults, got %v", got)
 	}
 }
 
-func TestItoaDays(t *testing.T) {
+func TestSince(t *testing.T) {
 	cases := map[int]string{0: "30 days ago", -1: "30 days ago", 14: "14 days ago"}
 	for in, want := range cases {
-		if got := itoaDays(in); got != want {
-			t.Errorf("itoaDays(%d) = %q, want %q", in, got, want)
+		if got := since(in); got != want {
+			t.Errorf("since(%d) = %q, want %q", in, got, want)
 		}
 	}
 }
 
-func TestItoa(t *testing.T) {
-	cases := map[int]string{0: "0", 7: "7", 30: "30"}
-	for in, want := range cases {
-		if got := itoa(in); got != want {
-			t.Errorf("itoa(%d) = %q, want %q", in, got, want)
-		}
+func TestRankBreaksTiesByPath(t *testing.T) {
+	got := rank("b.go\na.go\n", nil)
+	if got[0].Path != "a.go" || got[1].Path != "b.go" {
+		t.Errorf("ties must be ordered by path, got %+v", got)
+	}
+}
+
+func TestRunRejectsInvalidAuditIgnore(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".auditignore"), []byte("[\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	if _, err := Run(30, nil); err == nil {
+		t.Error("a malformed .auditignore must not be silently ignored")
 	}
 }
 

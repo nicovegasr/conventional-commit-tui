@@ -76,3 +76,31 @@ func TestWalkBatchesPreserveOrderAndIncrementalRange(t *testing.T) {
 		t.Fatalf("incremental range differs: got %d commits, want %d", len(incremental), len(batched)-1)
 	}
 }
+
+func TestResolveCommitAcceptsAnyRevision(t *testing.T) {
+	dir := t.TempDir()
+	gitForHistoryTest(t, dir, "init", "-q", "-b", "main")
+	gitForHistoryTest(t, dir, "config", "user.name", "Alex")
+	gitForHistoryTest(t, dir, "config", "user.email", "alex@example.test")
+	writeHistoryFile(t, dir, "a")
+	commitHistoryFile(t, dir, "first")
+	first := gitForHistoryTest(t, dir, "rev-parse", "HEAD")
+	writeHistoryFile(t, dir, "b")
+	commitHistoryFile(t, dir, "second")
+	repo, err := Open(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, revision := range []string{first[:7], "HEAD~1", first} {
+		got, err := repo.ResolveCommit(context.Background(), revision)
+		if err != nil || got != first {
+			t.Errorf("ResolveCommit(%q) = %q, %v; want %s", revision, got, err, first)
+		}
+	}
+	for _, revision := range []string{"--all", "missing"} {
+		if _, err := repo.ResolveCommit(context.Background(), revision); err == nil {
+			t.Errorf("ResolveCommit(%q) accepted", revision)
+		}
+	}
+}
