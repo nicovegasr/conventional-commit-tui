@@ -20,6 +20,10 @@ later goal — ADR-0004.)
 
 ### Changed
 
+- Coupling defaults are now support ≥ 1 and recency ranking with a 90-day
+  half-life, chosen on tuning windows and confirmed on validation windows
+  (ADR-0010). `--min-support 3 --rank shared` restores the previous ranking.
+
 - `nib coupled` accepts flags before or after the file, and `--before` any
   revision (abbreviated OID, tag, `HEAD~3`).
 - `/audit` reuses the `.nibignore` matcher and reports a malformed
@@ -27,6 +31,12 @@ later goal — ADR-0004.)
   deterministically.
 
 ### Added
+
+- `--rank shared|jaccard|recent` and `--half-life` for `coupled` and
+  `evaluate`, plus `evaluate --offset` for tuning/validation splits (ADR-0010).
+- `nib evaluate`: reproducible held-out evaluation of file coupling against
+  unfiltered co-change and global-frequency baselines, with precision, recall,
+  coverage and false positives at k = 1, 3, 5, 10 (ADR-0009).
 
 - Persistent session: a successful commit refreshes the working tree (no
   auto-quit) instead of closing the app (ADR-0007).

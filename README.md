@@ -15,6 +15,7 @@ make build
 ./nib coupled internal/inventory/service.go
 ./nib coupled internal/inventory/service.go --min-support 2 --json
 ./nib coupled internal/inventory/service.go --before <commit-oid>
+./nib evaluate --prefix internal/ --ext .go   # held-out scoring vs baselines
 ```
 
 Run inside the repository to analyze. File arguments are relative to its root,

@@ -56,15 +56,17 @@ Committing changes advances HEAD, so the local derived index must be updated
 again before queries. The database lives in the current worktree's Git directory
 and is intentionally not versioned.
 
-Exploratory chronological holdouts showed mixed results: Nib beat global file
-frequency on Astro (13 vs. 2 hits across 44 cases) but lost on the blog (8 vs.
-13 across 31 cases); coverage was low in both. Do not claim predictive
-usefulness yet. Expand the evaluation and add a source-conditioned baseline.
-`--before <oid>` excludes the held-out commit and commits outside its ancestry.
-Then repeat real-repository measurements under controlled cache conditions and
-on an intermediate-sized repository; capture incremental updates and query
-latency distributions. Only after those results should symbol identity,
-extraction and impact semantics be designed.
+`nib evaluate` (ADR-0009) replaces the exploratory holdout scripts. The first
+preregistered run (blog, fzf, Astro) showed source-conditioned co-change beats
+global frequency, but the original filters (support ≥ 3) lost to unfiltered
+co-change. ADR-0010 then tuned support, commit-size cap and ranking on older
+windows and validated on newer ones: support 1, ≤ 50 paths and `--rank recent`
+with a 90-day half-life are now the defaults. They beat the old defaults on all
+three validation sets and unfiltered co-change on two of three (the blog is
+the exception). Three repositories are still a small basis: add more and re-run
+the protocol (`grid` commands in the benchmark report) before tuning further.
+Then capture incremental update and query latency distributions. Only after
+that should symbol identity, extraction and impact semantics be designed.
 
 ## Known boundaries
 

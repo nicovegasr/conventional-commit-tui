@@ -138,3 +138,97 @@ nib coupled packages/astro/src/core/build/index.ts \
 Next evaluation should use a preregistered sample of held-out commits and
 sources, report coverage and precision/recall at several cutoffs, and compare
 against both global file frequency and source-conditioned co-change baselines.
+
+## Preregistered held-out evaluation — `nib evaluate` — 2026-10-21
+
+Protocol (ADR-0009), fixed before any result was read: every `stride`-th of the
+latest `window` first-parent commits, oldest first; merges, commits outside
+2–50 paths and commits without a modified source skipped; source chosen by
+`SHA-256(OID)` among eligible modified paths; history = strict ancestors only.
+Every repository used the same `.nibignore`: `*.lock`, `pnpm-lock.yaml`,
+`package-lock.json`, `go.sum`, `.changeset/`, `CHANGELOG.md`. Default Nib
+filters: support ≥ 3, ≤ 50 paths per commit. Go 1.26.4, macOS arm64, Apple M5,
+single runs.
+
+| Repository (HEAD) | Commits | Paths | Index | Sources |
+|---|---:|---:|---:|---|
+| Personal Astro blog (`51173e1`) | 156 | 467 | 0.72 s / 41 MiB | `src/` `.ts,.js,.astro` |
+| `junegunn/fzf` (`ac28b8c`) | 3,764 | 213 | 1.70 s / 85 MiB | `.go` |
+| `withastro/astro` (`8ea79a2`) | 15,322 | 21,386 | 18.53 s / 201 MiB | `packages/astro/src/` `.ts,.js,.astro` |
+
+Precision@5 / mean recall@5 / coverage@5 (cases with ≥ 1 hit). Precision counts
+empty slots against the predictor; "answered" is cases with any prediction.
+
+| Sample | Cases | nib | cochange (unfiltered) | frequency (global) | nib answered |
+|---|---:|---|---|---|---:|
+| blog 400/3 | 27 | 8.9% / 6.3% / 18.5% | **18.5% / 15.7% / 55.6%** | 11.1% / 5.1% / 29.6% | 8 |
+| fzf 400/3 | 46 | 23.0% / 40.7% / 63.0% | **23.9% / 45.1% / 67.4%** | 14.8% / 22.2% / 52.2% | 43 |
+| fzf 2000/5 | 131 | 31.6% / 60.6% / 75.6% | **32.1% / 61.1% / 77.1%** | 19.2% / 39.4% / 66.4% | 130 |
+| Astro 400/3 | 42 | 6.2% / 11.2% / 21.4% | **8.6% / 18.2% / 28.6%** | 2.4% / 4.3% / 11.9% | 33 |
+| Astro 2000/5 | 127 | 4.7% / 7.0% / 18.9% | **6.3% / 8.5% / 23.6%** | 1.9% / 2.2% / 8.7% | 97 |
+
+Evaluation took 0.09–1.93 s and at most 58 MiB peak RSS per run. k = 1, 3, 10
+and the per-case predictions are in each run's `--json` report.
+
+### Findings
+
+- **Conditioning on the source helps.** Source-conditioned co-change beat
+  global frequency at k = 5 in every sample, by 1.5–3.9× precision on fzf and
+  Astro. On the blog Nib's filtered ranking did not (8.9% vs 11.1%).
+- **Nib's default filters cost recall without buying precision.** Unfiltered
+  co-change matched or beat `nib` on every sample and every k. The support
+  threshold explains most of it: Nib answered 8 of 27 blog cases and 97 of
+  127 Astro cases, versus all of them unfiltered.
+- Absolute usefulness depends strongly on the repository: fzf (213 paths)
+  reached 60% recall@5; Astro (21k paths) stayed below 12%.
+
+These are five samples from three repositories, not a general claim. Next:
+compare support thresholds and the commit-size cap separately under this
+protocol before changing defaults, and add more repositories.
+
+```sh
+nib evaluate --prefix packages/astro/src/ --ext .ts,.js,.astro --window 2000 --stride 5 --json
+```
+
+## Tuning support, size cap and ranking — ADR-0010 — 2026-10-21
+
+Protocol fixed before running: tune on older first-parent windows (fzf, Astro
+`--offset 400 --window 1600 --stride 3`; blog `--offset 78 --window 78
+--stride 1`), validate on newer ones (`--window 400 --stride 3`; blog
+`--window 78 --stride 1`). Grid: support {1, 2, 3} × max-files {20, 50, 100} ×
+rank {shared, jaccard, recent 90 d, recent 365 d}. Selection: highest mean
+precision@5 over the three tuning sets. Same HEADs, sources and `.nibignore`
+as the previous section.
+
+Tuning (precision@5, 35 / 170 / 178 cases), selected rows of 36:
+
+| Configuration | Mean | blog | fzf | Astro |
+|---|---:|---:|---:|---:|
+| **support 1 · ≤ 50 · recent 90 d** (selected) | **24.0%** | 22.3% | 39.1% | 10.6% |
+| support 1 · ≤ 50 · recent 365 d | 23.4% | 22.3% | 39.1% | 8.8% |
+| support 1 · ≤ 50 · shared | 21.9% | 20.0% | 37.1% | 8.7% |
+| support 1 · ≤ 50 · jaccard | 18.0% | 18.9% | 28.4% | 6.9% |
+| support 3 · ≤ 50 · shared (previous default) | 17.6% | 9.7% | 36.1% | 7.0% |
+
+Validation (never used for selection; 43 / 46 / 42 cases), precision@5 and
+mean recall@5:
+
+| Predictor | blog | fzf | Astro |
+|---|---|---|---|
+| **selected** | **22.3% / 20.3%** | **27.0% / 54.8%** | **11.9% / 27.7%** |
+| previous default | 15.3% / 15.9% | 23.0% / 40.7% | 6.2% / 11.2% |
+| unfiltered co-change | 23.3% | 23.9% | 8.6% |
+| global frequency | 11.6% | 14.8% | 2.4% |
+
+### Findings
+
+- The selected configuration beat the previous default on all three
+  validation sets, so it became the default.
+- It beat unfiltered co-change on fzf and Astro, and lost narrowly on the blog.
+- Recency mattered most on Astro (validation recall@5 27.7% vs 11.2%); Jaccard
+  hurt everywhere, so demoting frequently changed files is not what helps.
+- 90 days is the edge of the grid; a shorter half-life was not tested. Explore
+  it on tuning windows only, and add repositories before trusting the choice.
+
+Reproduce with `scripts/tune-coupling.py WORKDIR tune` (the full grid) and
+`scripts/tune-coupling.py WORKDIR validate s1/f50/recent90 s3/f50/shared`.

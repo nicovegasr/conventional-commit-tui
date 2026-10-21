@@ -264,6 +264,14 @@ func readCommit(tx *bolt.Tx, id []byte) (storedCommit, error) {
 	return c, err
 }
 
+func commitByOID(tx *bolt.Tx, oid string) (storedCommit, error) {
+	id := bucket(tx, "oids").Get([]byte(oid))
+	if id == nil {
+		return storedCommit{}, fmt.Errorf("commit %s is not in the index", oid)
+	}
+	return readCommit(tx, id)
+}
+
 func postings(tx *bolt.Tx, fid []byte, visit func(storedCommit) error) error {
 	cursor := bucket(tx, "touches").Cursor()
 	for k, _ := cursor.Seek(fid); k != nil && bytes.HasPrefix(k, fid); k, _ = cursor.Next() {
