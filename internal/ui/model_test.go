@@ -50,13 +50,32 @@ func send(m Model, s string) (Model, tea.Cmd) {
 	return next.(Model), cmd
 }
 
-func sampleModel() (Model, *fakeRepo) {
+type fakeLogger struct {
+	out      string
+	err      error
+	scopeArg string
+	limitArg int
+}
+
+func (f *fakeLogger) Log(scope string, limit int) (string, error) {
+	f.scopeArg = scope
+	f.limitArg = limit
+	return f.out, f.err
+}
+
+func sampleModelWithLogger() (Model, *fakeRepo, *fakeLogger) {
 	repo := &fakeRepo{status: []git.FileChange{
 		{Path: "a.go", Status: 'M', Staged: false},
 		{Path: "b.go", Status: '?', Staged: false},
 		{Path: "c.go", Status: 'A', Staged: true},
 	}}
-	return New(repo), repo
+	lg := &fakeLogger{out: "abc123 feat: x\n"}
+	return New(repo, lg), repo, lg
+}
+
+func sampleModel() (Model, *fakeRepo) {
+	m, repo, _ := sampleModelWithLogger()
+	return m, repo
 }
 
 func TestNewLoadsFilesAndPreMarksStaged(t *testing.T) {
@@ -74,7 +93,7 @@ func TestNewLoadsFilesAndPreMarksStaged(t *testing.T) {
 }
 
 func TestNewPropagatesStatusError(t *testing.T) {
-	m := New(&fakeRepo{statusErr: errors.New("boom")})
+	m := New(&fakeRepo{statusErr: errors.New("boom")}, &fakeLogger{})
 	if m.err == nil {
 		t.Error("expected err set when Status fails")
 	}
@@ -269,6 +288,7 @@ func TestCommitStagesSelectedAndFormatsSubject(t *testing.T) {
 func TestCommitStageErrorIsReported(t *testing.T) {
 	m, repo := sampleModel()
 	repo.stageErr = errors.New("stage failed")
+	m.message = "algo" // c.go is pre-staged; give it a message so the guard passes
 
 	_, cmd := send(m, "enter")
 	done := cmd().(commitDoneMsg)
@@ -280,27 +300,91 @@ func TestCommitStageErrorIsReported(t *testing.T) {
 	}
 }
 
-func TestCommitDoneMsgDrivesQuitOrError(t *testing.T) {
-	m, _ := sampleModel()
+func TestCommitSuccessRefreshesAndStaysOpen(t *testing.T) {
+	m, repo := sampleModel()
+	m.message = "algo roto"
+	// Simulate the tree after the commit landed.
+	repo.status = []git.FileChange{{Path: "left.go", Status: 'M', Staged: false}}
 
-	// Success: marks done and quits.
 	next, cmd := m.Update(commitDoneMsg{})
 	dm := next.(Model)
-	if !dm.done {
-		t.Error("successful commit should set done")
-	}
-	if cmd == nil {
-		t.Error("successful commit should return a quit command")
-	}
 
-	// Failure: surfaces the error, no quit.
-	next, cmd = m.Update(commitDoneMsg{err: errors.New("nope")})
+	// Must not quit (persistent session). If a cmd is returned it must not be Quit.
+	if cmd != nil {
+		if _, isQuit := cmd().(tea.QuitMsg); isQuit {
+			t.Fatal("commit success must not quit the persistent session")
+		}
+	}
+	if dm.message != "" {
+		t.Errorf("message should reset after commit, got %q", dm.message)
+	}
+	if dm.flash == "" {
+		t.Error("commit success should set a feedback flash")
+	}
+	if len(dm.files) != 1 || dm.files[0].Path != "left.go" {
+		t.Errorf("files should refresh from repo.Status, got %+v", dm.files)
+	}
+}
+
+func TestCommitFailureKeepsOpenWithFlash(t *testing.T) {
+	m, _ := sampleModel()
+	next, cmd := m.Update(commitDoneMsg{err: errors.New("nope")})
 	em := next.(Model)
-	if em.err == nil {
-		t.Error("failed commit should set err")
+	if em.err != nil {
+		t.Error("a failed commit must NOT set the fatal err (it would tear down the UI)")
+	}
+	if em.flash == "" {
+		t.Error("failed commit should surface a flash")
 	}
 	if cmd != nil {
-		t.Error("failed commit should not quit")
+		t.Error("failed commit should not return a command")
+	}
+}
+
+func TestEnterWithoutStagedFilesShowsHint(t *testing.T) {
+	m, _ := sampleModel()
+	m.staged = map[string]bool{} // unmark the pre-staged file: nothing to commit
+	m.message = "algo"
+	next, cmd := send(m, "enter")
+	if cmd != nil {
+		t.Error("enter with nothing marked must not run a commit")
+	}
+	if next.flash == "" {
+		t.Error("enter with nothing marked should show a hint flash")
+	}
+}
+
+func TestEnterWithEmptyMessageShowsHint(t *testing.T) {
+	m, _ := sampleModel() // c.go is pre-staged, message empty
+	next, cmd := send(m, "enter")
+	if cmd != nil {
+		t.Error("enter with an empty message must not run a commit")
+	}
+	if next.flash == "" {
+		t.Error("enter with an empty message should show a hint flash")
+	}
+}
+
+func TestCommitSuccessReloadsLog(t *testing.T) {
+	m, _, lg := sampleModelWithLogger()
+	lg.out = "new log\n"
+
+	next, cmd := m.Update(commitDoneMsg{})
+	dm := next.(Model)
+
+	if !dm.logLoading {
+		t.Error("commit success should mark the log as reloading")
+	}
+	if cmd == nil {
+		t.Fatal("commit success should return a reload command")
+	}
+	msg := cmd()
+	if _, isQuit := msg.(tea.QuitMsg); isQuit {
+		t.Fatal("commit success must not quit")
+	}
+	ll, ok := msg.(logLoadedMsg)
+	if !ok || ll.content != "new log\n" {
+		t.Errorf("expected reloaded log, got %T %+v", msg, msg)
 	}
 }
 
@@ -308,6 +392,112 @@ func TestQuitKeys(t *testing.T) {
 	m, _ := sampleModel()
 	if _, cmd := send(m, "q"); cmd == nil {
 		t.Error("q should quit")
+	}
+}
+
+func TestEscQuitsFromFilesZone(t *testing.T) {
+	m, _ := sampleModel() // focus = files
+	if _, cmd := send(m, "esc"); cmd == nil {
+		t.Error("esc in the files zone (top) should quit")
+	}
+}
+
+func TestEscWalksBackThenQuits(t *testing.T) {
+	m, _ := sampleModel()
+	m, _ = send(m, "tab") // -> type
+	m, _ = send(m, "tab") // -> message
+	m, _ = send(m, "esc") // -> type
+	if m.focus != zoneType {
+		t.Fatalf("esc from message should step to type, got %v", m.focus)
+	}
+	m, _ = send(m, "esc") // -> files
+	if m.focus != zoneFiles {
+		t.Fatalf("esc from type should step to files, got %v", m.focus)
+	}
+	if _, cmd := send(m, "esc"); cmd == nil {
+		t.Error("esc at the files zone should quit")
+	}
+}
+
+func TestQDoesNotQuitWhileTyping(t *testing.T) {
+	m, _ := sampleModel()
+	m, _ = send(m, "tab")
+	m, _ = send(m, "tab") // message zone
+	next, cmd := send(m, "q")
+	if cmd != nil {
+		t.Error("q in the message zone is text, must not quit")
+	}
+	if next.message != "q" {
+		t.Errorf("q should be typed, message = %q", next.message)
+	}
+}
+
+func TestQInTypeZoneDoesNotQuit(t *testing.T) {
+	m, _ := sampleModel()
+	m, _ = send(m, "tab") // type zone
+	if _, cmd := send(m, "q"); cmd != nil {
+		t.Error("q should quit only in the files zone")
+	}
+}
+
+func TestWindowSizeStored(t *testing.T) {
+	m, _ := sampleModel()
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	dm := next.(Model)
+	if dm.width != 120 || dm.height != 40 {
+		t.Errorf("size not stored: %d x %d", dm.width, dm.height)
+	}
+}
+
+func TestLogHiddenOnNarrowTerminal(t *testing.T) {
+	m, _ := sampleModel() // showLog default true
+	m.width = 70
+	if m.logVisible() {
+		t.Error("log must hide under 80 cols")
+	}
+	m.width = 100
+	if !m.logVisible() {
+		t.Error("log should show at 100 cols")
+	}
+}
+
+func TestInitLoadsLog(t *testing.T) {
+	m, _, lg := sampleModelWithLogger()
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatal("Init should return a log-load command")
+	}
+	msg := cmd()
+	ll, ok := msg.(logLoadedMsg)
+	if !ok {
+		t.Fatalf("expected logLoadedMsg, got %T", msg)
+	}
+	if ll.content != lg.out {
+		t.Errorf("log content = %q, want %q", ll.content, lg.out)
+	}
+	if lg.scopeArg != "current" {
+		t.Errorf("scope = %q, want current", lg.scopeArg)
+	}
+}
+
+func TestLogLoadedMsgStored(t *testing.T) {
+	m, _ := sampleModel()
+	next, _ := m.Update(logLoadedMsg{content: "X\n"})
+	dm := next.(Model)
+	if dm.logContent != "X\n" {
+		t.Errorf("logContent = %q", dm.logContent)
+	}
+	if dm.logLoading {
+		t.Error("logLoading should clear once the log arrives")
+	}
+}
+
+func TestLogLoadErrorStored(t *testing.T) {
+	m, _ := sampleModel()
+	next, _ := m.Update(logLoadedMsg{err: errors.New("boom")})
+	dm := next.(Model)
+	if dm.logErr == nil {
+		t.Error("logErr should be set")
 	}
 }
 
@@ -349,6 +539,32 @@ func TestHitTestDropItemsOnlyWhenOpen(t *testing.T) {
 	m.dropOpen = true
 	if got := m.hitTest(0, l.dropStart+1); got.kind != hitDropItem || got.idx != 1 {
 		t.Errorf("open dropdown row -> %+v, want hitDropItem idx 1", got)
+	}
+}
+
+func TestHitTestLogColumnIgnored(t *testing.T) {
+	m, _ := sampleModel()
+	m.width = 120 // logVisible: showLog true and >= 80
+	l := m.layout()
+	if got := m.hitTest(0, l.filesStart); got.kind != hitFile {
+		t.Errorf("left column file row -> %+v, want hitFile", got)
+	}
+	if got := m.hitTest(80, l.filesStart); got.kind != hitNone {
+		t.Errorf("log column click -> %+v, want hitNone", got)
+	}
+}
+
+func TestHitTestPaddingBelowFilesNotAFile(t *testing.T) {
+	m, _ := sampleModel()
+	m.width = 120
+	m.height = 40 // logRows tall -> band taller than the file list
+	l := m.layout()
+	if l.bandHeight <= l.fileCount {
+		t.Fatalf("expected band taller than files, band=%d files=%d", l.bandHeight, l.fileCount)
+	}
+	row := l.filesStart + l.fileCount + 1 // inside the band, below the files
+	if got := m.hitTest(0, row); got.kind == hitFile {
+		t.Errorf("padding row should not be a file hit, got %+v", got)
 	}
 }
 

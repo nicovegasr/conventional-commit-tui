@@ -9,6 +9,14 @@ later goal — ADR-0004.)
 
 ### Added
 
+- Persistent session: a successful commit refreshes the working tree (no
+  auto-quit) instead of closing the app (ADR-0007).
+- Git-log panel (Phase 3): optional read-only right-side log, auto-hidden under
+  80 columns, behind an injected `Logger` port (ADR-0005); refreshes after each
+  commit.
+- `esc` walk-back-then-quit: steps Message → Type → Files, then quits from the
+  files zone; `ctrl+c` quits anytime.
+
 - Minimal commit flow (Phase 1): file list + inline commit line wired to git
   through an injected `Repo` port (ADR-0005). Keyboard path (`j/k`, `space`,
   type shortcuts, `tab`, `enter`), commit result reported, transitions tested.

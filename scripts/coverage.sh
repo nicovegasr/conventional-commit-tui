@@ -18,6 +18,7 @@ DOMAIN_PKGS=(
 	./internal/stats
 	./internal/git
 	./internal/settings
+	./internal/index
 )
 
 fail=0

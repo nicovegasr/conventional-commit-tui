@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/nicovegasr/nib-git/internal/commit"
 	"github.com/nicovegasr/nib-git/internal/git"
@@ -24,6 +25,12 @@ type Repo interface {
 	Status() ([]git.FileChange, error)
 	Stage(files []string) error
 	Commit(subject string) error
+}
+
+// Logger is the narrow slice of git the log panel needs. Optional and read-only
+// (ADR-0005): keeping it separate from Repo lets /settings disable it later.
+type Logger interface {
+	Log(scope string, limit int) (string, error)
 }
 
 // zone is the part of the UI currently driving the keyboard.
@@ -38,6 +45,12 @@ const (
 // commitDoneMsg reports the outcome of a commit attempt.
 type commitDoneMsg struct{ err error }
 
+// logLoadedMsg carries the result of an async git-log fetch.
+type logLoadedMsg struct {
+	content string
+	err     error
+}
+
 // Model is the root application state.
 type Model struct {
 	repo     Repo
@@ -49,19 +62,32 @@ type Model struct {
 	focus    zone   // which zone owns the keyboard
 	dropOpen bool   // type dropdown expanded
 	dropIdx  int    // highlighted item while the dropdown is open
-	done     bool   // commit succeeded; ready to quit
+	flash    string // transient success feedback, cleared on the next keystroke
 	err      error
+
+	width   int
+	height  int
+	showLog bool // git-log panel enabled (Phase 4 /settings will toggle it)
+
+	logger     Logger
+	logScope   string // "current" | "all"; "custom" deferred to Phase 4
+	logContent string
+	logErr     error
+	logLoading bool
 
 	shortcuts map[string]int // type shortcut key -> index into commit.Types
 }
 
 // New builds the initial model and loads the working tree through repo.
-func New(repo Repo) Model {
+func New(repo Repo, logger Logger) Model {
 	m := Model{
 		repo:      repo,
+		logger:    logger,
+		logScope:  "current",
 		staged:    map[string]bool{},
 		shortcuts: typeShortcuts(),
 	}
+	m.showLog = true
 	files, err := repo.Status()
 	if err != nil {
 		m.err = err
@@ -85,19 +111,59 @@ func typeShortcuts() map[string]int {
 	return m
 }
 
+const logFetchLimit = 100 // fetch a generous window; View crops to the panel height
+
+// loadLog fetches the git log off the UI goroutine.
+func (m Model) loadLog() tea.Cmd {
+	logger, scope := m.logger, m.logScope
+	return func() tea.Msg {
+		out, err := logger.Log(scope, logFetchLimit)
+		return logLoadedMsg{content: out, err: err}
+	}
+}
+
 // Init implements tea.Model.
-func (m Model) Init() tea.Cmd { return nil }
+func (m Model) Init() tea.Cmd { return m.loadLog() }
 
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case commitDoneMsg:
+		// A failed commit must never tear down the minimal flow (ADR-0007): show
+		// it inline and keep the session open so the user can fix and retry.
 		if msg.err != nil {
-			m.err = msg.err
+			m.flash = "✗ no se pudo commitear"
 			return m, nil
 		}
-		m.done = true
-		return m, tea.Quit
+		// Persistent session (ADR-0007): refresh state, never quit.
+		m.message = ""
+		m.flash = "✓ commit creado"
+		files, err := m.repo.Status()
+		if err != nil {
+			m.flash = "✓ commit creado · no se pudo refrescar la lista"
+			return m, m.loadLog()
+		}
+		m.files = files
+		m.staged = map[string]bool{}
+		for _, f := range files {
+			if f.Staged {
+				m.staged[f.Path] = true
+			}
+		}
+		if m.cursor >= len(files) {
+			m.cursor = 0
+		}
+		m.logLoading = true
+		return m, m.loadLog()
+	case logLoadedMsg:
+		m.logLoading = false
+		m.logContent = msg.content
+		m.logErr = msg.err
+		return m, nil
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
 	case tea.KeyMsg:
 		return m.updateKey(msg)
 	case tea.MouseMsg:
@@ -107,6 +173,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.flash = "" // any keystroke dismisses the success flash
 	if key.String() == "ctrl+c" {
 		return m, tea.Quit
 	}
@@ -141,8 +208,10 @@ func (m Model) updateFiles(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.focus = zoneType
 	case "shift+tab":
 		m.focus = zoneMessage
+	case "esc":
+		return m, tea.Quit
 	case "enter":
-		return m, m.commit()
+		return m.attemptCommit()
 	}
 	return m, nil
 }
@@ -174,8 +243,6 @@ func (m Model) updateType(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch key.String() {
-	case "q":
-		return m, tea.Quit
 	case "down", "enter", " ":
 		m.dropOpen = true
 		m.dropIdx = m.typeIdx
@@ -211,7 +278,7 @@ func (m Model) updateMessage(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab":
 		m.focus = zoneType
 	case "enter":
-		return m, m.commit()
+		return m.attemptCommit()
 	case "backspace":
 		if m.message != "" {
 			m.message = m.message[:len(m.message)-1]
@@ -277,6 +344,21 @@ func (m Model) stagedFiles() []string {
 	return files
 }
 
+// attemptCommit guards the enter key: it refuses to commit with nothing marked
+// or an empty message, surfacing a hint instead of failing. This keeps `enter`
+// safe and never lets a no-op collapse the flow.
+func (m Model) attemptCommit() (Model, tea.Cmd) {
+	if len(m.stagedFiles()) == 0 {
+		m.flash = "marca al menos un archivo (espacio)"
+		return m, nil
+	}
+	if strings.TrimSpace(m.message) == "" {
+		m.flash = "escribe un mensaje antes de commitear"
+		return m, nil
+	}
+	return m, m.commit()
+}
+
 // commit stages the selected files and creates the commit, reporting the
 // outcome as a commitDoneMsg.
 func (m Model) commit() tea.Cmd {
@@ -298,19 +380,58 @@ func (m Model) commit() tea.Cmd {
 
 const headerRows = 2 // title + blank line above the file list
 
+const minWidthForLog = 80 // below this the minimal flow keeps the full width
+
+// logVisible reports whether the git-log panel should be drawn: enabled and the
+// terminal is wide enough that the minimal flow is not squeezed.
+func (m Model) logVisible() bool {
+	return m.showLog && m.width >= minWidthForLog
+}
+
+// leftColWidth splits the two-column band in half: files left, log right.
+func (m Model) leftColWidth() int {
+	return m.width / 2
+}
+
+const reservedBelow = 4 // blank + commit line + blank + help line under the band
+
+// logRows is how many rows the log column may fill. It is derived from the
+// terminal height and MUST leave room for everything drawn below the band —
+// including the open dropdown — plus a one-row safety margin. If the whole frame
+// ever exceeds the terminal height, Bubble Tea cannot clear it cleanly: the
+// dropdown ghosts and mouse clicks land on the wrong rows.
+func (m Model) logRows() int {
+	r := m.height - headerRows - reservedBelow - 1 // -1: never fill the last row
+	if m.dropOpen {
+		r -= len(commit.Types) // the open dropdown needs its own rows below the commit line
+	}
+	if r < 0 {
+		return 0
+	}
+	return r
+}
+
 type layout struct {
 	filesStart int // row of the first file
 	fileCount  int
+	bandHeight int // rows the two-column (files ‖ log) band occupies
 	commitRow  int // the "[ type ▾ ] message" line (type and message share it)
 	dropStart  int // first dropdown item row (only meaningful when open)
 }
 
 func (m Model) layout() layout {
 	n := len(m.files)
-	commitRow := headerRows + n + 1 // one blank line between files and the commit line
+	band := n
+	if m.logVisible() {
+		if lr := m.logRows(); lr > band {
+			band = lr
+		}
+	}
+	commitRow := headerRows + band + 1 // one blank line between the band and the commit line
 	return layout{
 		filesStart: headerRows,
 		fileCount:  n,
+		bandHeight: band,
 		commitRow:  commitRow,
 		dropStart:  commitRow + 1,
 	}
@@ -336,6 +457,9 @@ type hit struct {
 func (m Model) hitTest(x, y int) hit {
 	l := m.layout()
 	if y >= l.filesStart && y < l.filesStart+l.fileCount {
+		if m.logVisible() && x >= m.leftColWidth() {
+			return hit{kind: hitNone} // clicked the read-only log column
+		}
 		return hit{hitFile, y - l.filesStart}
 	}
 	if m.dropOpen && y >= l.dropStart && y < l.dropStart+len(commit.Types) {
@@ -358,17 +482,28 @@ func typeBoxWidth(name string) int {
 	return len([]rune(name)) + 8
 }
 
-// View implements tea.Model. See docs/ux-mockups.html for the target layout.
-func (m Model) View() string {
-	if m.err != nil {
-		return "nib: " + m.err.Error() + "\n"
-	}
-	if m.done {
-		return "nib: commit creado.\n"
-	}
+var dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
-	var b strings.Builder
-	b.WriteString("  nib — cambios\n\n")
+func dim(s string) string { return dimStyle.Render(s) }
+
+// truncate hard-caps a plain string to w display columns with an ellipsis.
+// Used only on plain (un-styled) cells; the dim status strings are short.
+func truncate(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= w {
+		return s
+	}
+	if w == 1 {
+		return "…"
+	}
+	return string(r[:w-1]) + "…"
+}
+
+func (m Model) fileLines() []string {
+	lines := make([]string, 0, len(m.files))
 	for i, f := range m.files {
 		marker := " "
 		if m.focus == zoneFiles && i == m.cursor {
@@ -378,7 +513,63 @@ func (m Model) View() string {
 		if m.staged[f.Path] {
 			mark = "✓"
 		}
-		fmt.Fprintf(&b, "%s %s %c %s\n", marker, mark, f.Status, f.Path)
+		lines = append(lines, fmt.Sprintf("%s %s %c %s", marker, mark, f.Status, f.Path))
+	}
+	return lines
+}
+
+// logBody returns the log lines or a single dimmed status line.
+func (m Model) logBody() []string {
+	switch {
+	case m.logLoading:
+		return []string{dim("cargando…")}
+	case m.logErr != nil:
+		return []string{dim("log no disponible")}
+	}
+	trimmed := strings.TrimRight(m.logContent, "\n")
+	if trimmed == "" {
+		return []string{dim("(sin commits)")}
+	}
+	return strings.Split(trimmed, "\n")
+}
+
+func (m Model) logLines(band int) []string {
+	lines := append([]string{dim("GIT LOG · " + m.logScope)}, m.logBody()...)
+	if len(lines) > band {
+		lines = lines[:band]
+	}
+	return lines
+}
+
+// View implements tea.Model. See docs/ux-mockups.html for the target layout.
+func (m Model) View() string {
+	if m.err != nil {
+		return "nib: " + m.err.Error() + "\n"
+	}
+
+	var b strings.Builder
+	b.WriteString("  nib — cambios\n\n")
+
+	l := m.layout()
+	left := m.fileLines()
+	if m.logVisible() {
+		right := m.logLines(l.bandHeight)
+		leftW := m.leftColWidth()
+		rightW := m.width - leftW - 3 // " │ "
+		for i := 0; i < l.bandHeight; i++ {
+			lc, rc := "", ""
+			if i < len(left) {
+				lc = left[i]
+			}
+			if i < len(right) {
+				rc = right[i]
+			}
+			fmt.Fprintf(&b, "%-*s │ %s\n", leftW, truncate(lc, leftW), truncate(rc, rightW))
+		}
+	} else {
+		for _, line := range left {
+			b.WriteString(line + "\n")
+		}
 	}
 
 	b.WriteString("\n")
@@ -387,7 +578,11 @@ func (m Model) View() string {
 	if m.dropOpen {
 		b.WriteString(m.dropdownView())
 	}
-	fmt.Fprintf(&b, "\n %s\n", m.helpLine())
+	help := m.helpLine()
+	if m.flash != "" {
+		help = m.flash + " · " + help
+	}
+	fmt.Fprintf(&b, "\n %s\n", help)
 	return b.String()
 }
 

@@ -1,5 +1,31 @@
 # Architecture
 
+## Analytical core
+
+The primary direction is local analysis of Git history (ADR-0008):
+
+```text
+main.go → internal/cli → internal/history (Git reader + streaming parser)
+                     → internal/index   (transactional storage + coupling)
+```
+
+`history` produces commit metadata and path-level changes independently of any
+consumer. Its parser is pure and unit-tested; the Git process adapter is covered
+by real-repository integration tests. `index` accepts a narrow history source so
+its transaction and query logic can be tested without Git. bbolt persists numeric
+path/commit IDs, OID lookups and file-to-commit postings. Coupling reads only the
+source postings and associated changes, without storing all possible pairs.
+
+The CLI owns flags, output and freshness checks. The index contains no terminal
+rendering or command-line parsing. A transaction publishes both data and snapshot
+metadata together; a failed rebuild rolls back to the previous snapshot.
+
+The existing TUI below is retained as a separate consumer. It does not yet
+display analytical results. Completing its original feature list is not a
+prerequisite for developing the analytical core.
+
+## Existing commit TUI
+
 A human-readable map of nib-git. For the *why* behind decisions, see
 [`adr/`](adr/). For build/test commands, see [`contributing.md`](contributing.md).
 
@@ -36,6 +62,12 @@ git CLI
 The domain packages split **pure logic** (parsing, ranking, formatting — fully
 tested) from a **thin shell-out seam** (`var run`/`var gitLog…`, stubbed in
 tests). This is what makes the ≥80% domain coverage real (ADR-0002).
+
+The UI now depends on **two injected ports**: `Repo` (status/stage/commit) y
+`Logger` (git log read-only). La sesión es **persistente**: un commit exitoso
+refresca el estado y no cierra la app (ADR-0007). `layout()` calcula una banda
+de **dos columnas** (archivos ‖ log) que comparten `View()` y `hitTest()`, de
+modo que el render y la detección de clics usan la misma geometría.
 
 ## Non-negotiable rules
 

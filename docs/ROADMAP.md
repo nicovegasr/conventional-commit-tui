@@ -1,5 +1,33 @@
 # nib — roadmap & design decisions
 
+## Current direction — repository history analysis
+
+The product direction is temporal repository analysis: persistent history,
+historical relationships and evidence for change impact. The original TUI roadmap below is historical context, not the
+current implementation priority.
+
+The first analytical slice implements `nib index [--rebuild]` and
+`nib coupled <file> [--json]`: local persistence, incremental DAG ingestion,
+file co-change, explicit eligibility filters and inspectable commit evidence.
+See ADR-0008 for semantics and limitations.
+
+Next milestones:
+
+1. Expand the exploratory held-out evaluation across a larger sample and another
+   repository; `nib coupled --before <oid>` supplies the strict-ancestor query
+   boundary. Compare against global-frequency and source-conditioned baselines,
+   and report precision/recall, coverage and false positives before claiming
+   analytical usefulness.
+2. Measure real repositories at increasing sizes and profile ingestion/query costs.
+   Initial Astro smoke completed; repeat under controlled conditions and include
+   another repository size before making capacity claims.
+3. Add file history/churn/ownership queries, then decide symbol identity and
+   extraction semantics before implementing symbol relationships.
+4. Expose validated evidence to agents and eventually PR workflows. Risk scores
+   require an operational definition and historical validation first.
+
+## Original commit-TUI roadmap
+
 Decisions locked in a design session (2026-06-25). This file is the source of
 truth so a fresh Claude session (or you, in a month) doesn't re-debate them.
 
@@ -41,8 +69,10 @@ than the Source Control panel or lazygit/gitui (both tried, neither fit). It is
   the row geometry shared by `View()` and `hitTest()`. `▸` marks the active zone
   + contextual help line. See the closed grill decisions in this file's history
   and `internal/ui/model_test.go`.
-- [ ] **Phase 3 — git-log panel.** Optional right-side log, `LogScope`
-  current/all/custom. Off-by-toggle.
+- [x] **Phase 3 — git-log panel.** Optional right-side log, `LogScope`
+  current/all. Off-by-toggle. Panel is **read-only** y se auto-oculta bajo 80
+  columnas; la app es ahora una **sesión persistente** (un commit refresca el
+  estado en vez de cerrar — ADR-0007). El scope `custom` queda diferido a Fase 4.
 - [ ] **Phase 4 — `/settings`.** Command palette + persisted TOML
   (`~/.config/nib/settings.toml`), all toggles live.
 - [ ] **Phase 5 — `/audit`.** Render hotspots, `--days`/`--exclude`, threshold

@@ -25,6 +25,10 @@ test: ## Run unit tests (fast, hermetic).
 test-integration: ## Run integration tests against real git (build tag: integration).
 	$(GO) test -tags=integration $(PKGS)
 
+.PHONY: bench
+bench: ## Benchmark synthetic indexing and coupling (1000 commits, no Git ingestion).
+	$(GO) test -run '^$$' -bench . -benchmem ./internal/index
+
 .PHONY: fmt
 fmt: ## Format all Go files in place.
 	gofmt -w .
