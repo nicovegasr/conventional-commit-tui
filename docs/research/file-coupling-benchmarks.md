@@ -189,3 +189,46 @@ protocol before changing defaults, and add more repositories.
 ```sh
 nib evaluate --prefix packages/astro/src/ --ext .ts,.js,.astro --window 2000 --stride 5 --json
 ```
+
+## Tuning support, size cap and ranking — ADR-0010 — 2026-10-21
+
+Protocol fixed before running: tune on older first-parent windows (fzf, Astro
+`--offset 400 --window 1600 --stride 3`; blog `--offset 78 --window 78
+--stride 1`), validate on newer ones (`--window 400 --stride 3`; blog
+`--window 78 --stride 1`). Grid: support {1, 2, 3} × max-files {20, 50, 100} ×
+rank {shared, jaccard, recent 90 d, recent 365 d}. Selection: highest mean
+precision@5 over the three tuning sets. Same HEADs, sources and `.nibignore`
+as the previous section.
+
+Tuning (precision@5, 35 / 170 / 178 cases), selected rows of 36:
+
+| Configuration | Mean | blog | fzf | Astro |
+|---|---:|---:|---:|---:|
+| **support 1 · ≤ 50 · recent 90 d** (selected) | **24.0%** | 22.3% | 39.1% | 10.6% |
+| support 1 · ≤ 50 · recent 365 d | 23.4% | 22.3% | 39.1% | 8.8% |
+| support 1 · ≤ 50 · shared | 21.9% | 20.0% | 37.1% | 8.7% |
+| support 1 · ≤ 50 · jaccard | 18.0% | 18.9% | 28.4% | 6.9% |
+| support 3 · ≤ 50 · shared (previous default) | 17.6% | 9.7% | 36.1% | 7.0% |
+
+Validation (never used for selection; 43 / 46 / 42 cases), precision@5 and
+mean recall@5:
+
+| Predictor | blog | fzf | Astro |
+|---|---|---|---|
+| **selected** | **22.3% / 20.3%** | **27.0% / 54.8%** | **11.9% / 27.7%** |
+| previous default | 15.3% / 15.9% | 23.0% / 40.7% | 6.2% / 11.2% |
+| unfiltered co-change | 23.3% | 23.9% | 8.6% |
+| global frequency | 11.6% | 14.8% | 2.4% |
+
+### Findings
+
+- The selected configuration beat the previous default on all three
+  validation sets, so it became the default.
+- It beat unfiltered co-change on fzf and Astro, and lost narrowly on the blog.
+- Recency mattered most on Astro (validation recall@5 27.7% vs 11.2%); Jaccard
+  hurt everywhere, so demoting frequently changed files is not what helps.
+- 90 days is the edge of the grid; a shorter half-life was not tested. Explore
+  it on tuning windows only, and add repositories before trusting the choice.
+
+Reproduce with `scripts/tune-coupling.py WORKDIR tune` (the full grid) and
+`scripts/tune-coupling.py WORKDIR validate s1/f50/recent90 s3/f50/shared`.

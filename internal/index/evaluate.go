@@ -28,6 +28,7 @@ const (
 type EvalOptions struct {
 	Options
 	Window     int      `json:"window"`
+	Offset     int      `json:"offset,omitempty"`
 	Stride     int      `json:"stride"`
 	Prefix     string   `json:"source_prefix,omitempty"`
 	Extensions []string `json:"source_extensions,omitempty"`
@@ -44,8 +45,8 @@ func DefaultEvalOptions() EvalOptions {
 
 // Validate rejects an empty sample.
 func (o EvalOptions) Validate() error {
-	if o.Window < 1 || o.Stride < 1 {
-		return errors.New("window and stride must be positive")
+	if o.Window < 1 || o.Stride < 1 || o.Offset < 0 {
+		return errors.New("window and stride must be positive; offset must not be negative")
 	}
 	return o.Options.Validate()
 }
@@ -109,7 +110,7 @@ func (s *Store) Evaluate(ctx context.Context, opts EvalOptions) (Evaluation, err
 			return errors.New("empty index; run nib index")
 		}
 		e.Head = m.Head
-		chain, err := firstParentChain(ctx, tx, m.Head, opts.Window)
+		chain, err := firstParentChain(ctx, tx, m.Head, opts.Offset, opts.Window)
 		if err != nil {
 			return err
 		}
@@ -123,7 +124,7 @@ func (s *Store) Evaluate(ctx context.Context, opts EvalOptions) (Evaluation, err
 			if !ok {
 				continue
 			}
-			if c.Predictions, err = h.predict(ctx, tx, c.Source); err != nil {
+			if c.Predictions, err = h.predict(ctx, tx, c.Source, chain[i].Timestamp); err != nil {
 				return err
 			}
 			e.Cases = append(e.Cases, c)
@@ -136,10 +137,11 @@ func (s *Store) Evaluate(ctx context.Context, opts EvalOptions) (Evaluation, err
 	return e, err
 }
 
-// firstParentChain returns up to window commits ending at head, oldest first.
-func firstParentChain(ctx context.Context, tx *bolt.Tx, head string, window int) ([]storedCommit, error) {
+// firstParentChain returns up to window commits, oldest first, ending offset
+// first-parent commits below head.
+func firstParentChain(ctx context.Context, tx *bolt.Tx, head string, offset, window int) ([]storedCommit, error) {
 	var chain []storedCommit
-	for oid := head; oid != "" && len(chain) < window; {
+	for oid := head; oid != "" && len(chain) < offset+window; {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -153,6 +155,7 @@ func firstParentChain(ctx context.Context, tx *bolt.Tx, head string, window int)
 			oid = c.Parents[0]
 		}
 	}
+	chain = chain[min(offset, len(chain)):]
 	slices.Reverse(chain)
 	return chain, nil
 }
@@ -176,7 +179,7 @@ func (h *trainingSet) advanceTo(ctx context.Context, tx *bolt.Tx, c storedCommit
 		}
 		for _, f := range ancestor.Files {
 			if !pathignore.Matches(string(bucket(tx, "paths").Get(key(f.FileID))), h.opts.Ignore) {
-				observe(h.frequency, f.FileID, ancestor, 0)
+				observe(h.frequency, f.FileID, ancestor, 0, 1)
 			}
 		}
 	})
@@ -228,16 +231,18 @@ func pickSource(oid string, sources []string) string {
 	return sources[binary.BigEndian.Uint64(digest[:8])%uint64(len(sources))]
 }
 
-func (h *trainingSet) predict(ctx context.Context, tx *bolt.Tx, source string) (map[string][]string, error) {
+// predict ranks with Nib's options and both baselines. Jaccard's candidate
+// totals are exactly the global eligible frequencies already accumulated.
+func (h *trainingSet) predict(ctx context.Context, tx *bolt.Tx, source string, now int64) (map[string][]string, error) {
 	fid := bucket(tx, "files").Get([]byte(source))
-	unfiltered := Options{MinSupport: 1, MaxFiles: math.MaxInt, Limit: h.opts.Limit, Ignore: h.opts.Ignore}
+	unfiltered := Options{MinSupport: 1, MaxFiles: math.MaxInt, Limit: h.opts.Limit, Rank: RankShared, Ignore: h.opts.Ignore}
 	predictions := map[string][]string{}
 	for name, opts := range map[string]Options{PredictorNib: h.opts, PredictorCochange: unfiltered} {
-		obs, err := observeSource(ctx, tx, fid, opts, h.ancestors)
+		obs, err := observeSource(ctx, tx, fid, opts, h.ancestors, now)
 		if err != nil {
 			return nil, err
 		}
-		predictions[name] = relationshipPaths(rankRelationships(tx, obs.candidates, obs.eligible, opts))
+		predictions[name] = relationshipPaths(rankRelationships(tx, obs.candidates, obs.eligible, opts, h.total))
 	}
 	predictions[PredictorFrequency] = h.mostFrequent(tx, source)
 	return predictions, nil
@@ -248,9 +253,17 @@ func (h *trainingSet) predict(ctx context.Context, tx *bolt.Tx, source string) (
 func (h *trainingSet) mostFrequent(tx *bolt.Tx, source string) []string {
 	opts := h.opts
 	opts.Limit++
-	paths := relationshipPaths(rankRelationships(tx, h.frequency, 1, opts))
+	opts.Rank = RankShared
+	paths := relationshipPaths(rankRelationships(tx, h.frequency, 1, opts, h.total))
 	paths = slices.DeleteFunc(paths, func(p string) bool { return p == source })
 	return paths[:min(len(paths), h.opts.Limit)]
+}
+
+func (h *trainingSet) total(id uint64) int {
+	if c := h.frequency[id]; c != nil {
+		return c.shared
+	}
+	return 0
 }
 
 func relationshipPaths(relationships []Relationship) []string {

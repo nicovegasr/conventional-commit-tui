@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,20 +26,22 @@ const usage = `Usage:
 
 Coupled options:
   --json              Emit a machine-readable report
-  --min-support N     Minimum shared eligible commits (default 3)
+  --min-support N     Minimum shared eligible commits (default 1)
   --max-files N       Exclude commits changing more than N files (default 50)
   --limit N           Maximum relationships (default 10)
   --evidence N        Commit examples per relationship, 0..100 (default 5)
+  --rank MODE         shared, jaccard or recent (default recent; ADR-0010)
+  --half-life DAYS    Age at which a co-change counts half (default 90)
   --before REV        Use strict ancestors of this commit only (OID, tag, HEAD~3)
 
 Evaluate options (ADR-0009):
   --json              Emit the report with every case and prediction
   --window N          Latest first-parent commits to sample from (default 400)
+  --offset N          Start that window N first-parent commits below HEAD
   --stride N          Hold out every N-th of them (default 3)
   --prefix P          Only pick sources under this path prefix
   --ext .a,.b         Only pick sources with these extensions
-  --min-support N     As in coupled (default 3)
-  --max-files N       As in coupled (default 50)
+  --min-support, --max-files, --rank, --half-life   As in coupled
 
 Paths are relative to the repository root. Coupling is historical frequency,
 not dependency or a risk prediction. .nibignore filters related paths at query
@@ -93,6 +96,24 @@ func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
+// filterFlags binds the population and ranking options coupled and evaluate
+// share, so both commands interpret them identically.
+func filterFlags(fs *flag.FlagSet, opts *index.Options) {
+	fs.IntVar(&opts.MinSupport, "min-support", opts.MinSupport, "Minimum shared eligible commits")
+	fs.IntVar(&opts.MaxFiles, "max-files", opts.MaxFiles, "Maximum paths per eligible commit")
+	fs.StringVar(&opts.Rank, "rank", opts.Rank, "Ranking mode: shared, jaccard or recent")
+	fs.IntVar(&opts.HalfLifeDays, "half-life", opts.HalfLifeDays, "Half-life in days for --rank recent")
+}
+
+// filters describes the effective options in one line.
+func filters(o index.Options) string {
+	line := fmt.Sprintf("support >= %d, paths/commit <= %d, rank %s", o.MinSupport, o.MaxFiles, cmp.Or(o.Rank, index.RankShared))
+	if o.Rank == index.RankRecent {
+		line += fmt.Sprintf(" (half-life %d days)", o.HalfLifeDays)
+	}
+	return line
+}
+
 // repositoryPath rejects paths that would escape the repository root.
 func repositoryPath(file string) (string, error) {
 	clean := path.Clean(file)
@@ -136,8 +157,7 @@ func runCoupled(ctx context.Context, dir string, args []string, out io.Writer) e
 	opts := index.DefaultOptions()
 	fs := flags("coupled", out)
 	asJSON := fs.Bool("json", false, "Emit JSON")
-	fs.IntVar(&opts.MinSupport, "min-support", opts.MinSupport, "Minimum shared eligible commits")
-	fs.IntVar(&opts.MaxFiles, "max-files", opts.MaxFiles, "Maximum paths per eligible commit")
+	filterFlags(fs, &opts)
 	fs.IntVar(&opts.Limit, "limit", opts.Limit, "Maximum relationships")
 	fs.IntVar(&opts.Evidence, "evidence", opts.Evidence, "Maximum commit examples")
 	fs.StringVar(&opts.Before, "before", "", "Use strict ancestors of this commit only")
@@ -181,9 +201,9 @@ func runEvaluate(ctx context.Context, dir string, args []string, out io.Writer) 
 	extensions := fs.String("ext", "", "Comma-separated source extensions")
 	fs.IntVar(&opts.Window, "window", opts.Window, "Latest first-parent commits to sample from")
 	fs.IntVar(&opts.Stride, "stride", opts.Stride, "Hold out every N-th commit")
+	fs.IntVar(&opts.Offset, "offset", 0, "First-parent commits below HEAD where the window starts")
 	fs.StringVar(&opts.Prefix, "prefix", "", "Source path prefix")
-	fs.IntVar(&opts.MinSupport, "min-support", opts.MinSupport, "Minimum shared eligible commits")
-	fs.IntVar(&opts.MaxFiles, "max-files", opts.MaxFiles, "Maximum paths per eligible commit")
+	filterFlags(fs, &opts.Options)
 	positional, err := parseArgs(fs, args)
 	if err != nil {
 		return helpError(err)
@@ -254,7 +274,7 @@ func helpError(err error) error {
 
 func renderReport(out io.Writer, r index.Report) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Historical co-change: %q\nSnapshot: %s\nEligible commits: %d · Excluded: %d\nFilters: support >= %d, paths/commit <= %d\n", r.Path, r.Head, r.Eligible, r.Excluded, r.Options.MinSupport, r.Options.MaxFiles)
+	fmt.Fprintf(&b, "Historical co-change: %q\nSnapshot: %s\nEligible commits: %d · Excluded: %d\nFilters: %s\n", r.Path, r.Head, r.Eligible, r.Excluded, filters(r.Options))
 	if len(r.Options.Ignore) == 0 {
 		b.WriteString("Ignored paths: none\n\n")
 	} else {
@@ -278,12 +298,12 @@ func renderEvaluation(out io.Writer, e index.Evaluation) error {
 	var b strings.Builder
 	o := e.Options
 	fmt.Fprintf(&b, "Held-out evaluation · snapshot %s\n", e.Head)
-	fmt.Fprintf(&b, "Sample: every %d of the latest %d first-parent commits", o.Stride, o.Window)
+	fmt.Fprintf(&b, "Sample: every %d of %d first-parent commits, %d below HEAD", o.Stride, o.Window, o.Offset)
 	if o.Prefix != "" || len(o.Extensions) > 0 {
 		fmt.Fprintf(&b, " · sources %q %s", o.Prefix, strings.Join(o.Extensions, ","))
 	}
 	fmt.Fprintf(&b, "\nCases: %d of %d sampled · skipped: %d merges, %d by size, %d without source, %d without targets\n", len(e.Cases), e.Sampled, e.Skipped.Merges, e.Skipped.Size, e.Skipped.NoSource, e.Skipped.NoTargets)
-	fmt.Fprintf(&b, "Filters: support >= %d, paths/commit <= %d\n\n", o.MinSupport, o.MaxFiles)
+	fmt.Fprintf(&b, "Filters: %s\n\n", filters(o.Options))
 	fmt.Fprintf(&b, "%-10s %4s %6s %6s %10s %8s %9s\n", "predictor", "k", "hits", "fp", "precision", "recall", "coverage")
 	for _, p := range e.Predictors {
 		for _, m := range p.Metrics {

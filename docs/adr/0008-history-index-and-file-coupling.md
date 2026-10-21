@@ -42,7 +42,8 @@ must demonstrate useful file relationships before symbols or risk scores.
   old path as context and touches its destination; queries do not silently join
   histories across renames. Delete/recreate cycles at one path share history.
 - Coupling is directional: `shared eligible commits / source eligible commits`.
-  Default minimum support is 3 and maximum files per observation is 50. Exclude
+  Default minimum support was 3 and maximum files per observation is 50;
+  ADR-0010 replaced the support and ranking defaults after held-out tuning. Exclude
   oversized commits from both numerator and denominator; report excluded
   observations and effective filters. Sort by shared count, then path.
 - Return bounded commit evidence per relationship plus exact shared counts.

@@ -99,12 +99,18 @@ func TestEvaluateSamplesTheFirstParentChain(t *testing.T) {
 }
 
 func TestEvaluateTrainsOnlyOnStrictAncestors(t *testing.T) {
+	for _, rank := range []string{RankShared, RankJaccard, RankRecent} {
+		t.Run(rank, func(t *testing.T) { assertMatchesStrictAncestorQueries(t, rank) })
+	}
+}
+
+func assertMatchesStrictAncestorQueries(t *testing.T, rank string) {
 	opts := DefaultEvalOptions()
-	opts.Stride, opts.MinSupport = 1, 1
+	opts.Stride, opts.MinSupport, opts.Rank, opts.HalfLifeDays = 1, 1, rank, 1
 	s, e, src, parents := evaluated(t, opts)
 
 	for _, c := range e.Cases {
-		nib, err := s.Coupled(context.Background(), c.Source, Options{MinSupport: 1, MaxFiles: opts.MaxFiles, Limit: 10, Before: c.OID})
+		nib, err := s.Coupled(context.Background(), c.Source, Options{MinSupport: 1, MaxFiles: opts.MaxFiles, Limit: 10, Rank: rank, HalfLifeDays: 1, Before: c.OID})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -178,11 +184,28 @@ func TestEvaluateSourceFiltersAndIgnoredTargets(t *testing.T) {
 	}
 }
 
+func TestEvaluateOffsetSkipsTheLatestCommits(t *testing.T) {
+	opts := DefaultEvalOptions()
+	opts.Stride, opts.Offset, opts.Window = 1, 3, 3
+	_, e, src, _ := evaluated(t, opts)
+	// Below the 3 latest chain commits come c7, c6 (merge) and c5.
+	if e.Sampled != 3 || e.Skipped.Merges != 1 || len(e.Cases) != 2 || e.Cases[1].OID != src.commits[6].OID {
+		t.Fatalf("sampled %d skipped %+v cases %+v", e.Sampled, e.Skipped, e.Cases)
+	}
+}
+
 func TestEvaluateRejectsInvalidOptionsAndEmptyIndex(t *testing.T) {
-	bad := DefaultEvalOptions()
-	bad.Window = 0
-	if _, err := openStore(t).Evaluate(context.Background(), bad); err == nil {
-		t.Error("accepted an empty window")
+	for _, mutate := range []func(*EvalOptions){
+		func(o *EvalOptions) { o.Window = 0 },
+		func(o *EvalOptions) { o.Offset = -1 },
+		func(o *EvalOptions) { o.Rank = "best" },
+		func(o *EvalOptions) { o.Rank = RankRecent },
+	} {
+		bad := DefaultEvalOptions()
+		mutate(&bad)
+		if _, err := openStore(t).Evaluate(context.Background(), bad); err == nil {
+			t.Errorf("accepted %+v", bad)
+		}
 	}
 	if _, err := openStore(t).Evaluate(context.Background(), DefaultEvalOptions()); err == nil {
 		t.Error("evaluated an empty index")

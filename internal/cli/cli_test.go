@@ -82,14 +82,24 @@ func TestEvaluationShowsSampleAndEveryPredictor(t *testing.T) {
 	if err := renderEvaluation(&out, e); err != nil {
 		t.Fatal(err)
 	}
-	for _, part := range []string{"every 3 of the latest 400", `"src/" .ts,.astro`, "Cases: 1 of 4 sampled", "1 merges, 2 by size", "nib           5      2      3      40.0%    25.0%    100.0%"} {
+	for _, part := range []string{"every 3 of 400 first-parent commits, 0 below HEAD", `"src/" .ts,.astro`, "Cases: 1 of 4 sampled", "1 merges, 2 by size", "nib           5      2      3      40.0%    25.0%    100.0%"} {
 		if !strings.Contains(out.String(), part) {
 			t.Errorf("missing %q:\n%s", part, out.String())
 		}
 	}
 }
+func TestFiltersNameTheRanking(t *testing.T) {
+	opts := index.DefaultOptions()
+	if got := filters(opts); got != "support >= 1, paths/commit <= 50, rank recent (half-life 90 days)" {
+		t.Errorf("filters = %q", got)
+	}
+	opts.Rank = index.RankShared
+	if got := filters(opts); !strings.HasSuffix(got, "rank shared") {
+		t.Errorf("filters = %q", got)
+	}
+}
 func TestEvaluateRejectsInvalidArguments(t *testing.T) {
-	for _, args := range [][]string{{"evaluate", "extra"}, {"evaluate", "--window", "0"}, {"evaluate", "--bad"}} {
+	for _, args := range [][]string{{"evaluate", "extra"}, {"evaluate", "--window", "0"}, {"evaluate", "--bad"}, {"evaluate", "--rank", "best"}, {"evaluate", "--offset", "-1"}} {
 		if err := Run(context.Background(), "missing", args, &bytes.Buffer{}); err == nil {
 			t.Errorf("accepted %v", args)
 		}

@@ -57,14 +57,16 @@ again before queries. The database lives in the current worktree's Git directory
 and is intentionally not versioned.
 
 `nib evaluate` (ADR-0009) replaces the exploratory holdout scripts. The first
-preregistered run (blog, fzf, Astro; see the benchmark report) showed that
-source-conditioned co-change beats global frequency, but Nib's default filters
-(support ≥ 3) lose recall and coverage to unfiltered co-change on every sample.
-Do not claim predictive usefulness for the defaults. Next: run the same
-protocol varying `--min-support` and `--max-files` separately, add more
-repositories, then capture incremental update and query latency distributions.
-Only after those results should symbol identity, extraction and impact
-semantics be designed.
+preregistered run (blog, fzf, Astro) showed source-conditioned co-change beats
+global frequency, but the original filters (support ≥ 3) lost to unfiltered
+co-change. ADR-0010 then tuned support, commit-size cap and ranking on older
+windows and validated on newer ones: support 1, ≤ 50 paths and `--rank recent`
+with a 90-day half-life are now the defaults. They beat the old defaults on all
+three validation sets and unfiltered co-change on two of three (the blog is
+the exception). Three repositories are still a small basis: add more and re-run
+the protocol (`grid` commands in the benchmark report) before tuning further.
+Then capture incremental update and query latency distributions. Only after
+that should symbol identity, extraction and impact semantics be designed.
 
 ## Known boundaries
 
