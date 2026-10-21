@@ -14,6 +14,8 @@ See ADR-0008 for semantics and limitations.
 Next milestones:
 
 1. Measure real repositories at increasing sizes and profile ingestion/query costs.
+   Initial Astro smoke completed; repeat under controlled conditions and include
+   another repository size before making capacity claims.
 2. Evaluate held-out historical changes with chronological training boundaries;
    report baseline comparisons, precision/recall and false-positive behaviour.
 3. Add file history/churn/ownership queries, then decide symbol identity and

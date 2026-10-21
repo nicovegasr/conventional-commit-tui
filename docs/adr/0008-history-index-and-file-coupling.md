@@ -23,7 +23,9 @@ must demonstrate useful file relationships before symbols or risk scores.
 - Assign numeric commit and path IDs. Store commits, path dictionaries,
   OID lookups, and `(file ID, commit ID)` postings. Do not materialize all
   file pairs: a large commit would create quadratic storage.
-- Stream one NUL-delimited Git log, including raw changes and numstat. Paths
+- Enumerate reachable OIDs in reverse topological order, then stream raw changes
+  and numstat from `git log --no-walk=unsorted --stdin` in batches of 1,000.
+  This bounds Git's diff-process memory while preserving callback order. Paths
   retain whitespace, tabs, newlines and Unicode. Preserve full OIDs (including
   SHA-256), parents, author identity, time, messages, rename source, change
   type and binary-aware line counts. Git's rename detection is heuristic.

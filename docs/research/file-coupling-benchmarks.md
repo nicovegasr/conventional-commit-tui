@@ -38,18 +38,38 @@ and 21,386 paths.
 | Operation | Elapsed | Maximum resident set | Result |
 |---|---:|---:|---|
 | Initial full index | 18.16 s | not captured | 44 MiB allocated |
-| First rebuild in place | 18.26 s | 429 MiB | index file 104 MiB (88 MiB allocated) |
-| Second rebuild in place | 17.32 s | 435 MiB | unchanged at 104 MiB (88 MiB allocated) |
+| First rebuild in place, single Git process | 18.26 s | 429 MiB | index file 104 MiB (88 MiB allocated) |
+| Second rebuild in place, single Git process | 17.32 s | 435 MiB | unchanged at 104 MiB (88 MiB allocated) |
+| Rebuild with 1,000-commit Git batches | 18.58 s | 201 MiB | unchanged at 104 MiB (88 MiB allocated) |
 | `coupled` on `packages/astro/src/core/build/index.ts` | 0.08 s | 15 MiB | 145 eligible, 34 excluded |
 | `coupled` on `packages/astro/src/actions/handler.ts` | 0.07 s | 7 MiB | 2 eligible, 2 excluded |
 
 The first rebuild was run against the existing index file; allocated storage
 increased from 44 MiB to 88 MiB. A second rebuild remained at that size, so this
 sample shows a higher file high-water mark rather than repeated linear growth.
-The large-history rebuild's memory and storage costs still need profiling before
-recommending frequent rebuilds. Measurements are single runs from
-`/usr/bin/time -l`, without cache control or latency percentiles. They are a
-real-repository smoke test, not a capacity claim.
+Measurements are single runs from `/usr/bin/time -l`, without cache control or
+latency percentiles. They are a real-repository smoke test, not a capacity
+claim.
+
+### Isolating the memory peak
+
+I ran the Git traversal separately, redirecting output to `/dev/null`, to
+distinguish Git's diff work from Nib's parser and bbolt transaction. The
+full-history `git log --numstat --no-renames` took 17.57 s and reached 434 MiB
+maximum RSS. The same metadata-only history walk, without diff output, took
+0.17 s and reached 39 MiB. Limiting numstat to the latest 1,000 commits took
+2.22 s / 200 MiB; the latest 100 took 0.38 s / 87 MiB. Rename detection did not
+materially change the full-history RSS.
+
+A prototype enumerated OIDs with `git rev-list --reverse --topo-order`, then
+processed them through 16 `git log --no-walk=unsorted --stdin` batches of 1,000.
+The Git-only run took 19.29 s / 201 MiB. After implementing that approach,
+`nib index --rebuild` took 18.58 s / 201 MiB: about 53% less peak RSS than the
+single-process run, at the cost of about one second in these individual runs.
+This points to Git's full-history diff/line-count traversal as the memory source,
+rather than accumulated Go-side commit objects. It is a comparison of single
+runs, not a controlled profile; repeat with controlled cache conditions and
+another repository size before treating the trade-off as general.
 
 For `core/build/index.ts`, the unfiltered ranking included `pnpm-lock.yaml` and
 `packages/astro/package.json`. A temporary root `.nibignore` containing those

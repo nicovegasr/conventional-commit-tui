@@ -14,6 +14,8 @@ import (
 // Repository identifies a worktree and its private index location.
 type Repository struct{ Root, GitDir, Head string }
 
+const walkBatchSize = 1000
+
 func command(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "--no-replace-objects"}, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "LC_ALL=C")
@@ -77,22 +79,47 @@ func (r Repository) IsAncestor(ctx context.Context, oid string) (bool, error) {
 	return err == nil, err
 }
 
-// Walk streams commits reachable from captured HEAD but not from after.
-// The callback's error aborts the Git process and the caller's transaction.
+// Walk streams commits reachable from captured HEAD but not from after in
+// bounded batches. A callback error stops the current Git process.
 func (r Repository) Walk(ctx context.Context, after string, visit func(Commit) error) error {
-	args := []string{
-		"-c", "diff.renameLimit=1000", "log",
-		"--reverse", "--topo-order", "--root",
-		"--no-show-signature", "--no-notes", "--no-use-mailmap", "--encoding=UTF-8",
-		"--no-ext-diff", "--no-textconv", "--no-color", "--no-abbrev",
-		"--no-diff-merges", "--raw", "--numstat", "-z", "--find-renames=50%",
-		"--format=%x00nib-commit%x00%H%x00%P%x00%an%x00%ae%x00%at%x00%B%x00", r.Head,
+	return r.walkBatches(ctx, after, walkBatchSize, visit)
+}
+
+func (r Repository) walkBatches(ctx context.Context, after string, batchSize int, visit func(Commit) error) error {
+	if batchSize < 1 {
+		return errors.New("history batch size must be positive")
 	}
+	args := []string{"rev-list", "--reverse", "--topo-order", r.Head}
 	if after != "" {
 		args = append(args, "^"+after)
 	}
+	revisions, err := output(ctx, r.Root, args...)
+	if err != nil {
+		return err
+	}
+	oids := strings.Fields(revisions)
+	for start := 0; start < len(oids); start += batchSize {
+		end := min(start+batchSize, len(oids))
+		if err := r.walkBatch(ctx, oids[start:end], visit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r Repository) walkBatch(ctx context.Context, oids []string, visit func(Commit) error) error {
+	args := []string{
+		"-c", "diff.renameLimit=1000", "log",
+		"--no-walk=unsorted", "--stdin",
+		"--root",
+		"--no-show-signature", "--no-notes", "--no-use-mailmap", "--encoding=UTF-8",
+		"--no-ext-diff", "--no-textconv", "--no-color", "--no-abbrev",
+		"--no-diff-merges", "--raw", "--numstat", "-z", "--find-renames=50%",
+		"--format=%x00nib-commit%x00%H%x00%P%x00%an%x00%ae%x00%at%x00%B%x00",
+	}
 	args = append(args, "--")
 	cmd := command(ctx, r.Root, args...)
+	cmd.Stdin = strings.NewReader(strings.Join(oids, "\n") + "\n")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
