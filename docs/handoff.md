@@ -61,10 +61,13 @@ preregistered run (blog, fzf, Astro) showed source-conditioned co-change beats
 global frequency, but the original filters (support ≥ 3) lost to unfiltered
 co-change. ADR-0010 then tuned support, commit-size cap and ranking on older
 windows and validated on newer ones: support 1, ≤ 50 paths and `--rank recent`
-with a 90-day half-life are now the defaults. They beat the old defaults on all
-three validation sets and unfiltered co-change on two of three (the blog is
-the exception). Three repositories are still a small basis: add more and re-run
-the protocol (`grid` commands in the benchmark report) before tuning further.
+with a 90-day half-life are now the defaults. ADR-0011 replicated them on
+Flask, ripgrep, OkHttp and Django (better than the old defaults on three of
+four; Flask had only two cases), and an extended grid did not justify another
+change.
+
+Two protocol flaws must be fixed before more tuning: `--max-files` changes the
+case population, and first-parent sampling skips merge-workflow histories.
 Then capture incremental update and query latency distributions. Only after
 that should symbol identity, extraction and impact semantics be designed.
 

@@ -17,8 +17,10 @@ Next milestones:
    preregistered run on three repositories: source conditioning beats global
    frequency, but Nib's default filters lost to unfiltered co-change. Tuning on
    older windows and validating on newer ones (ADR-0010) replaced the defaults
-   with support 1 and recency ranking (90-day half-life). Next: add
-   repositories and re-run the protocol before further changes.
+   with support 1 and recency ranking (90-day half-life). ADR-0011 replicated
+   that choice on four new repositories (Flask, ripgrep, OkHttp, Django).
+   Next: make the evaluation population independent of `--max-files` and
+   sample merge-workflow histories before tuning further.
 2. Measure real repositories at increasing sizes and profile ingestion/query costs.
    Initial Astro smoke completed; repeat under controlled conditions and include
    another repository size before making capacity claims.
