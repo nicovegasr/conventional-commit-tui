@@ -62,7 +62,7 @@ type Model struct {
 	focus    zone   // which zone owns the keyboard
 	dropOpen bool   // type dropdown expanded
 	dropIdx  int    // highlighted item while the dropdown is open
-	flash    string // transient success feedback, cleared on the next keystroke
+	flash    string // transient feedback (success, hint or failure), cleared on the next keystroke
 	err      error
 
 	width   int
@@ -81,23 +81,33 @@ type Model struct {
 // New builds the initial model and loads the working tree through repo.
 func New(repo Repo, logger Logger) Model {
 	m := Model{
-		repo:      repo,
-		logger:    logger,
-		logScope:  "current",
-		staged:    map[string]bool{},
-		shortcuts: typeShortcuts(),
+		repo:       repo,
+		logger:     logger,
+		showLog:    true,
+		logScope:   "current",
+		logLoading: true, // Init fetches it
+		shortcuts:  typeShortcuts(),
 	}
-	m.showLog = true
 	files, err := repo.Status()
 	if err != nil {
 		m.err = err
 		return m
 	}
+	return m.withFiles(files)
+}
+
+// withFiles replaces the file list, marking what git already has staged and
+// keeping the cursor inside the new list.
+func (m Model) withFiles(files []git.FileChange) Model {
 	m.files = files
+	m.staged = map[string]bool{}
 	for _, f := range files {
 		if f.Staged {
 			m.staged[f.Path] = true
 		}
+	}
+	if m.cursor >= len(files) {
+		m.cursor = 0
 	}
 	return m
 }
@@ -129,32 +139,7 @@ func (m Model) Init() tea.Cmd { return m.loadLog() }
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case commitDoneMsg:
-		// A failed commit must never tear down the minimal flow (ADR-0007): show
-		// it inline and keep the session open so the user can fix and retry.
-		if msg.err != nil {
-			m.flash = "✗ no se pudo commitear"
-			return m, nil
-		}
-		// Persistent session (ADR-0007): refresh state, never quit.
-		m.message = ""
-		m.flash = "✓ commit creado"
-		files, err := m.repo.Status()
-		if err != nil {
-			m.flash = "✓ commit creado · no se pudo refrescar la lista"
-			return m, m.loadLog()
-		}
-		m.files = files
-		m.staged = map[string]bool{}
-		for _, f := range files {
-			if f.Staged {
-				m.staged[f.Path] = true
-			}
-		}
-		if m.cursor >= len(files) {
-			m.cursor = 0
-		}
-		m.logLoading = true
-		return m, m.loadLog()
+		return m.afterCommit(msg.err)
 	case logLoadedMsg:
 		m.logLoading = false
 		m.logContent = msg.content
@@ -280,15 +265,55 @@ func (m Model) updateMessage(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		return m.attemptCommit()
 	case "backspace":
-		if m.message != "" {
-			m.message = m.message[:len(m.message)-1]
+		if r := []rune(m.message); len(r) > 0 {
+			m.message = string(r[:len(r)-1])
 		}
 	default:
-		if len(key.String()) == 1 {
-			m.message += key.String()
-		}
+		m.message += typedText(key)
 	}
 	return m, nil
+}
+
+// afterCommit keeps the persistent session alive (ADR-0007) whatever the
+// outcome. Both paths re-read the working tree: a failed commit may already have
+// staged the files. A failure keeps the message and shows git's reason (e.g. a
+// rejecting hook) so the user can fix and retry.
+func (m Model) afterCommit(err error) (Model, tea.Cmd) {
+	var cmd tea.Cmd
+	if err != nil {
+		m.flash = "✗ " + lastLine(err.Error())
+	} else {
+		m.message = ""
+		m.flash = "✓ commit creado"
+		m.logLoading = true
+		cmd = m.loadLog()
+	}
+	files, statusErr := m.repo.Status()
+	if statusErr != nil {
+		m.flash += " · no se pudo refrescar la lista"
+		return m, cmd
+	}
+	return m.withFiles(files), cmd
+}
+
+// lastLine is the most specific line of a multi-line git error: hooks and git
+// itself print their verdict last.
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
+}
+
+// typedText is the printable text a key contributes to the message: any rune
+// (ñ, á, emoji, a paste), never control keys. Newlines from a paste would break
+// the one-line subject, so they become spaces.
+func typedText(key tea.KeyMsg) string {
+	switch key.Type {
+	case tea.KeySpace:
+		return " "
+	case tea.KeyRunes:
+		return strings.ReplaceAll(string(key.Runes), "\n", " ")
+	}
+	return ""
 }
 
 // updateMouse handles left clicks (mapped through hitTest) and the wheel, which

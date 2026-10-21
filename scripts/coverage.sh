@@ -11,7 +11,9 @@ set -euo pipefail
 THRESHOLD=${COVERAGE_THRESHOLD:-80}
 
 # Domain packages under the coverage gate. Keep in sync with the architecture:
-# everything with real logic, never internal/ui (render/IO).
+# everything with real logic, never internal/ui (render/IO). internal/history
+# and internal/cli are excluded: their logic is unit-tested, but most of their
+# code is the git/CLI adapter seam that integration tests cover (ADR-0006).
 DOMAIN_PKGS=(
 	./internal/commit
 	./internal/audit
@@ -19,6 +21,7 @@ DOMAIN_PKGS=(
 	./internal/git
 	./internal/settings
 	./internal/index
+	./internal/pathignore
 )
 
 fail=0

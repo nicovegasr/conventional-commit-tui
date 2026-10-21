@@ -108,7 +108,8 @@ func (s *Store) Coupled(ctx context.Context, path string, opts Options) (Report,
 				return nil
 			}
 			r.Eligible++
-			return collectCandidates(tx, sourceID, c, opts, candidates)
+			collectCandidates(tx, sourceID, c, opts, candidates)
+			return nil
 		})
 		if err != nil {
 			return err
@@ -123,7 +124,7 @@ func eligibleObservation(c storedCommit, opts Options) bool {
 	return len(c.Parents) <= 1 && len(c.Files) <= opts.MaxFiles
 }
 
-func collectCandidates(tx *bolt.Tx, sourceID uint64, c storedCommit, opts Options, candidates map[uint64]*candidate) error {
+func collectCandidates(tx *bolt.Tx, sourceID uint64, c storedCommit, opts Options, candidates map[uint64]*candidate) {
 	for _, f := range c.Files {
 		if f.FileID == sourceID {
 			continue
@@ -133,7 +134,6 @@ func collectCandidates(tx *bolt.Tx, sourceID uint64, c storedCommit, opts Option
 			observe(candidates, f.FileID, c, opts.Evidence)
 		}
 	}
-	return nil
 }
 
 func isBeforeCutoff(c storedCommit, ancestors map[string]struct{}) bool {

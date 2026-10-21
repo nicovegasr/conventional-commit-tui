@@ -100,3 +100,53 @@ func TestStageCommitLogRoundTrip(t *testing.T) {
 		t.Errorf("Log() = %q, want it to contain %q", out, want)
 	}
 }
+
+func TestStatusKeepsPathsWithSpacesStageable(t *testing.T) {
+	newRepo(t)
+	writeFile(t, "my file.go", "package a\n")
+
+	changes, err := Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Path != "my file.go" {
+		t.Fatalf("Status() = %+v, want the verbatim path", changes)
+	}
+	if err := Stage([]string{changes[0].Path}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCommitErrorCarriesHookReason(t *testing.T) {
+	newRepo(t)
+	hooks, err := filepath.Abs("hooks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hooks, "pre-commit"), []byte("#!/bin/sh\necho 'lint failed' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "config", "core.hooksPath", hooks).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	writeFile(t, "a.go", "package a\n")
+	if err := Stage([]string{"a.go"}); err != nil {
+		t.Fatal(err)
+	}
+
+	err = Commit("feat: add a.")
+	if err == nil || !strings.Contains(err.Error(), "lint failed") {
+		t.Fatalf("Commit() error = %v, want the hook's reason", err)
+	}
+}
+
+func TestCommitErrorCarriesStdoutReason(t *testing.T) {
+	newRepo(t)
+	err := Commit("feat: nothing.")
+	if err == nil || !strings.Contains(err.Error(), "nothing to commit") {
+		t.Fatalf("Commit() error = %v, want git's explanation", err)
+	}
+}

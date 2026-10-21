@@ -28,7 +28,7 @@ Coupled options:
   --max-files N       Exclude commits changing more than N files (default 50)
   --limit N           Maximum relationships (default 10)
   --evidence N        Commit examples per relationship, 0..100 (default 5)
-  --before OID        Use strict ancestors of this indexed commit only
+  --before REV        Use strict ancestors of this commit only (OID, tag, HEAD~3)
 
 Paths are relative to the repository root. Coupling is historical frequency,
 not dependency or a risk prediction. .nibignore filters related paths at query
@@ -56,7 +56,38 @@ func Run(ctx context.Context, dir string, args []string, out io.Writer) error {
 func flags(name string, out io.Writer) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(out)
+	fs.Usage = func() { _, _ = io.WriteString(out, usage) }
 	return fs
+}
+
+// parseArgs lets flags appear before or after positional arguments, so
+// `nib coupled --json a.go` and `nib coupled a.go --json` agree. Everything
+// after "--" is positional, for paths that start with a dash.
+func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positional []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		consumed := len(args) - fs.NArg()
+		if consumed > 0 && args[consumed-1] == "--" {
+			return append(positional, fs.Args()...), nil
+		}
+		if fs.NArg() == 0 {
+			return positional, nil
+		}
+		positional = append(positional, fs.Arg(0))
+		args = fs.Args()[1:]
+	}
+}
+
+// repositoryPath rejects paths that would escape the repository root.
+func repositoryPath(file string) (string, error) {
+	clean := path.Clean(file)
+	if path.IsAbs(file) || file == "" || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", errors.New("file must be relative to the repository root")
+	}
+	return clean, nil
 }
 
 func runIndex(ctx context.Context, dir string, args []string, out io.Writer) error {
@@ -90,17 +121,6 @@ func runIndex(ctx context.Context, dir string, args []string, out io.Writer) err
 }
 
 func runCoupled(ctx context.Context, dir string, args []string, out io.Writer) error {
-	if len(args) == 0 {
-		return errors.New("usage: nib coupled <repository-relative-file> [options]")
-	}
-	if args[0] == "--help" || args[0] == "-h" {
-		_, err := io.WriteString(out, usage)
-		return err
-	}
-	file := args[0]
-	if path.IsAbs(file) || file == "" || path.Clean(file) == ".." || strings.HasPrefix(path.Clean(file), "../") {
-		return errors.New("file must be relative to the repository root")
-	}
 	opts := index.DefaultOptions()
 	fs := flags("coupled", out)
 	asJSON := fs.Bool("json", false, "Emit JSON")
@@ -108,21 +128,31 @@ func runCoupled(ctx context.Context, dir string, args []string, out io.Writer) e
 	fs.IntVar(&opts.MaxFiles, "max-files", opts.MaxFiles, "Maximum paths per eligible commit")
 	fs.IntVar(&opts.Limit, "limit", opts.Limit, "Maximum relationships")
 	fs.IntVar(&opts.Evidence, "evidence", opts.Evidence, "Maximum commit examples")
-	fs.StringVar(&opts.Before, "before", "", "Use strict ancestors of this indexed commit only")
-	if err := fs.Parse(args[1:]); err != nil {
+	fs.StringVar(&opts.Before, "before", "", "Use strict ancestors of this commit only")
+	positional, err := parseArgs(fs, args)
+	if err != nil {
 		return helpError(err)
 	}
-	if fs.NArg() != 0 {
-		return errors.New("unexpected argument after coupled options")
+	if len(positional) != 1 {
+		return errors.New("usage: nib coupled <repository-relative-file> [options]")
 	}
-	if err := opts.Validate(); err != nil {
+	file, err := repositoryPath(positional[0])
+	if err != nil {
+		return err
+	}
+	if err = opts.Validate(); err != nil {
 		return err
 	}
 	repo, err := history.Open(ctx, dir)
 	if err != nil {
 		return err
 	}
-	report, err := query(ctx, repo, path.Clean(file), opts)
+	if opts.Before != "" {
+		if opts.Before, err = repo.ResolveCommit(ctx, opts.Before); err != nil {
+			return err
+		}
+	}
+	report, err := query(ctx, repo, file, opts)
 	if err != nil {
 		return err
 	}

@@ -46,7 +46,7 @@ Domain packages split **pure logic** (tested) from a **thin shell-out seam**
 
 - **TDD, pragmatic** (ADR-0002): logic written test-first (parsing, ranking,
   `Format`, model `Update→state`); raw render + git shell-out are not.
-- **Coverage ≥80% per domain package** (`commit, audit, stats, git, settings`);
+- **Coverage ≥80% per domain package** (`commit, audit, stats, git, settings, index, pathignore`);
   `internal/ui` requires 0%. Gate: `make cover`.
 - **Branch + PR**, never commit to `main`; CI (`make ci`) is the gate (ADR-0004).
 - **Non-obvious design decision → write an ADR first** (`docs/adr/`, copy
