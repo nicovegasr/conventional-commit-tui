@@ -5,7 +5,8 @@ Date: 2026-10-21.
 ## Delivered
 
 The first analytical slice is complete: `nib index [--rebuild] [--json]` and
-`nib coupled <repository-relative-file> [options]`. This is the beginning of the
+`nib coupled <repository-relative-file> [options]`, including `--before <oid>`
+for strict-ancestor historical queries. This is the beginning of the
 repository-intelligence product, not completion of the entire long-term vision.
 
 - `internal/history`: immutable Git snapshot, streaming raw/numstat parser,
@@ -55,11 +56,15 @@ Committing changes advances HEAD, so the local derived index must be updated
 again before queries. The database lives in the current worktree's Git directory
 and is intentionally not versioned.
 
-Next, repeat real-repository measurements under controlled cache conditions and
+Exploratory chronological holdouts showed mixed results: Nib beat global file
+frequency on Astro (13 vs. 2 hits across 44 cases) but lost on the blog (8 vs.
+13 across 31 cases); coverage was low in both. Do not claim predictive
+usefulness yet. Expand the evaluation and add a source-conditioned baseline.
+`--before <oid>` excludes the held-out commit and commits outside its ancestry.
+Then repeat real-repository measurements under controlled cache conditions and
 on an intermediate-sized repository; capture incremental updates and query
-latency distributions. Then evaluate historical usefulness with strict
-chronological holdouts and frequency baselines. Only after those results should
-symbol identity, extraction and impact semantics be designed.
+latency distributions. Only after those results should symbol identity,
+extraction and impact semantics be designed.
 
 ## Known boundaries
 

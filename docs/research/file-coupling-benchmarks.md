@@ -86,3 +86,55 @@ Historical utility is a separate experiment: a correct ratio does not prove
 predictive usefulness. Train strictly on earlier commits, predict held-out
 changed files and compare with simple frequency baselines. Never train on the
 commit being predicted.
+
+### Chronological holdout probe — 2026-10-21
+
+Added `nib coupled --before <oid>` to query only strict ancestors of a held-out
+commit. The cutoff commit and commits outside its ancestry are excluded; this
+uses the indexed parent graph, not timestamps. The index must still be current
+at HEAD. A query on the full Astro history took 0.26 s with this cutoff versus
+0.08 s without it in single local runs; ancestor traversal adds measurable
+query cost.
+
+First probe: held out
+`71e2b24bb365e5a8809fc0432716f91ecc6d8ab5` (Vite-resolved build output paths),
+and queried `packages/astro/src/core/build/index.ts`. The commit changed 32
+files. Nib's top five included two of the 31 sibling files actually changed:
+`static-build.ts` and `generate.ts` (precision@5 40%). A simple prior-history
+file-frequency baseline, with the same 50-file commit cap and package metadata
+ignored, included one of those siblings (20%). This is one source/commit pair,
+not statistically meaningful evidence of predictive value; it only confirms
+that a strict holdout query can produce a promising, evidence-backed result.
+
+An exploratory sample used every third commit among the latest 400 first-parent
+commits, skipping merges, changes outside the 2–50-file range and commits
+without an eligible source file. One source path was selected deterministically
+per held-out commit. With default support and top five, results were:
+
+| Repository | Cases | Nib hits | Nib precision@5 | Nib mean recall@5 | Nib coverage | Frequency hits | Baseline precision@5 | Baseline mean recall@5 | Baseline coverage |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Astro (`withastro/astro`) | 44 | 13 | 5.9% | 7.0% | 20.5% | 2 | 0.9% | 1.3% | 4.5% |
+| Personal Astro blog | 31 | 8 | 5.2% | 16.0% | 22.6% | 13 | 8.4% | 16.4% | 32.3% |
+
+Eligible anchors were `.ts`, `.js` or `.astro` files under `packages/astro/src/`
+for Astro and `src/` for the blog. The selected anchor was the SHA-256-derived
+index into the sorted eligible paths for that commit. Precision counts relevant
+files against five slots per case; recall is averaged per held-out commit.
+
+The baseline ranks paths by frequency across each cutoff's strict ancestors,
+using single-parent commits with at most 50 changed paths and a minimum path
+frequency of three. The same per-repository `.nibignore` rules apply. Nib beats
+the baseline on this sample from Astro, while global frequency performs better
+on the blog; absolute coverage remains low in both. The samples are exploratory,
+not statistically conclusive or a generalization claim. The blog run used HEAD
+`54ac79d52b9fb8acdadd2b09da60281768c29667` and its index included two commits
+not present in the previous snapshot.
+
+```sh
+nib coupled packages/astro/src/core/build/index.ts \
+  --before 71e2b24bb365e5a8809fc0432716f91ecc6d8ab5 --json --limit 5
+```
+
+Next evaluation should use a preregistered sample of held-out commits and
+sources, report coverage and precision/recall at several cutoffs, and compare
+against both global file frequency and source-conditioned co-change baselines.
