@@ -66,9 +66,11 @@ Flask, ripgrep, OkHttp and Django (better than the old defaults on three of
 four; Flask had only two cases), and an extended grid did not justify another
 change.
 
-Two protocol flaws must be fixed before more tuning: `--max-files` changes the
-case population, and first-parent sampling skips merge-workflow histories.
-Then capture incremental update and query latency distributions. Only after
+ADR-0012 fixed both protocol flaws found there: held-out commits are capped by
+`--case-max-files`, independent of the predictor's `--max-files`, and sampled
+from every non-merge commit of the DAG by author time instead of the
+first-parent chain. Re-run the seven-repository replication under it, then
+capture incremental update and query latency distributions. Only after
 that should symbol identity, extraction and impact semantics be designed.
 
 ## Known boundaries

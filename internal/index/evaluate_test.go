@@ -77,12 +77,12 @@ func evaluated(t *testing.T, opts EvalOptions) (*Store, Evaluation, fakeSource, 
 	return s, e, src, parents
 }
 
-func TestEvaluateSamplesTheFirstParentChain(t *testing.T) {
+func TestEvaluateSamplesNonMergeCommitsFromTheWholeDAG(t *testing.T) {
 	opts := DefaultEvalOptions()
 	opts.Stride = 1
 	_, e, src, _ := evaluated(t, opts)
 
-	if e.Sampled != 9 || e.Skipped != (Skipped{Merges: 1, Size: 1, NoSource: 2}) {
+	if e.Sampled != 9 || e.Skipped != (Skipped{Size: 1, NoSource: 2}) {
 		t.Fatalf("sampled %d, skipped %+v", e.Sampled, e.Skipped)
 	}
 	var oids []string
@@ -92,10 +92,35 @@ func TestEvaluateSamplesTheFirstParentChain(t *testing.T) {
 			t.Errorf("source leaked into targets: %+v", c)
 		}
 	}
-	want := []string{src.commits[1].OID, src.commits[2].OID, src.commits[4].OID, src.commits[6].OID, src.commits[9].OID}
+	want := []string{src.commits[1].OID, src.commits[2].OID, src.commits[3].OID, src.commits[4].OID, src.commits[6].OID, src.commits[9].OID}
 	if !reflect.DeepEqual(oids, want) {
-		t.Errorf("cases %v, want oldest-first %v (the side commit is not on the chain)", oids, want)
+		t.Errorf("cases %v, want oldest-first %v including the side commit", oids, want)
 	}
+}
+
+func TestEvaluateCaseSizeIsIndependentOfThePredictorCap(t *testing.T) {
+	opts := DefaultEvalOptions()
+	opts.Stride = 1
+	_, wide, _, _ := evaluated(t, opts)
+	opts.MaxFiles = 2
+	_, narrow, _, _ := evaluated(t, opts)
+	if !reflect.DeepEqual(caseOIDs(wide), caseOIDs(narrow)) {
+		t.Errorf("--max-files changed the cases: %v vs %v", caseOIDs(wide), caseOIDs(narrow))
+	}
+
+	opts = DefaultEvalOptions()
+	opts.Stride, opts.CaseMaxFiles = 1, 2
+	if _, e, _, _ := evaluated(t, opts); e.Skipped.Size != 3 {
+		t.Errorf("--case-max-files 2 must skip the 1-, 3- and 4-path commits: %+v", e.Skipped)
+	}
+}
+
+func caseOIDs(e Evaluation) []string {
+	oids := []string{}
+	for _, c := range e.Cases {
+		oids = append(oids, c.OID)
+	}
+	return oids
 }
 
 func TestEvaluateTrainsOnlyOnStrictAncestors(t *testing.T) {
@@ -167,7 +192,7 @@ func bruteForceFrequency(src fakeSource, parents map[string][]string, cutoff, so
 func TestEvaluateSourceFiltersAndIgnoredTargets(t *testing.T) {
 	opts := DefaultEvalOptions()
 	opts.Stride, opts.Extensions = 1, []string{".go"}
-	if _, e, _, _ := evaluated(t, opts); len(e.Cases) != 0 || e.Skipped.NoSource != 7 {
+	if _, e, _, _ := evaluated(t, opts); len(e.Cases) != 0 || e.Skipped.NoSource != 8 {
 		t.Errorf("extension filter: %+v", e.Skipped)
 	}
 
@@ -188,8 +213,8 @@ func TestEvaluateOffsetSkipsTheLatestCommits(t *testing.T) {
 	opts := DefaultEvalOptions()
 	opts.Stride, opts.Offset, opts.Window = 1, 3, 3
 	_, e, src, _ := evaluated(t, opts)
-	// Below the 3 latest chain commits come c7, c6 (merge) and c5.
-	if e.Sampled != 3 || e.Skipped.Merges != 1 || len(e.Cases) != 2 || e.Cases[1].OID != src.commits[6].OID {
+	// Below the 3 latest non-merge commits come c4, c5 and c7.
+	if e.Sampled != 3 || len(e.Cases) != 3 || e.Cases[0].OID != src.commits[3].OID || e.Cases[2].OID != src.commits[6].OID {
 		t.Fatalf("sampled %d skipped %+v cases %+v", e.Sampled, e.Skipped, e.Cases)
 	}
 }
@@ -198,6 +223,7 @@ func TestEvaluateRejectsInvalidOptionsAndEmptyIndex(t *testing.T) {
 	for _, mutate := range []func(*EvalOptions){
 		func(o *EvalOptions) { o.Window = 0 },
 		func(o *EvalOptions) { o.Offset = -1 },
+		func(o *EvalOptions) { o.CaseMaxFiles = 1 },
 		func(o *EvalOptions) { o.Rank = "best" },
 		func(o *EvalOptions) { o.Rank = RankRecent },
 	} {

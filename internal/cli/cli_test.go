@@ -76,13 +76,13 @@ func TestReportShowsDenominatorAndEscapesPaths(t *testing.T) {
 func TestEvaluationShowsSampleAndEveryPredictor(t *testing.T) {
 	opts := index.DefaultEvalOptions()
 	opts.Prefix, opts.Extensions = "src/", []string{".ts", ".astro"}
-	e := index.Evaluation{Head: "abc", Options: opts, Sampled: 4, Skipped: index.Skipped{Merges: 1, Size: 2}, Cases: []index.HoldoutCase{{}},
+	e := index.Evaluation{Head: "abc", Options: opts, Sampled: 4, Skipped: index.Skipped{Size: 2}, Cases: []index.HoldoutCase{{}},
 		Predictors: []index.PredictorResult{{Name: "nib", Metrics: []index.Metrics{{K: 5, Hits: 2, FalsePositives: 3, Precision: 0.4, Recall: 0.25, Coverage: 1}}}}}
 	var out bytes.Buffer
 	if err := renderEvaluation(&out, e); err != nil {
 		t.Fatal(err)
 	}
-	for _, part := range []string{"every 3 of 400 first-parent commits, 0 below HEAD", `"src/" .ts,.astro`, "Cases: 1 of 4 sampled", "1 merges, 2 by size", "nib           5      2      3      40.0%    25.0%    100.0%"} {
+	for _, part := range []string{"every 3 of 400 non-merge commits of 2..50 paths, 0 below the latest", `"src/" .ts,.astro`, "Cases: 1 of 4 sampled", "skipped: 2 by size", "nib           5      2      3      40.0%    25.0%    100.0%"} {
 		if !strings.Contains(out.String(), part) {
 			t.Errorf("missing %q:\n%s", part, out.String())
 		}

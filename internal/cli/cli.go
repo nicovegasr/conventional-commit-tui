@@ -34,11 +34,12 @@ Coupled options:
   --half-life DAYS    Age at which a co-change counts half (default 90)
   --before REV        Use strict ancestors of this commit only (OID, tag, HEAD~3)
 
-Evaluate options (ADR-0009):
+Evaluate options (ADR-0009, ADR-0012):
   --json              Emit the report with every case and prediction
-  --window N          Latest first-parent commits to sample from (default 400)
-  --offset N          Start that window N first-parent commits below HEAD
+  --window N          Latest non-merge commits to sample from (default 400)
+  --offset N          Start that window N non-merge commits below the latest
   --stride N          Hold out every N-th of them (default 3)
+  --case-max-files N  Only hold out commits changing 2..N files (default 50)
   --prefix P          Only pick sources under this path prefix
   --ext .a,.b         Only pick sources with these extensions
   --min-support, --max-files, --rank, --half-life   As in coupled
@@ -199,9 +200,10 @@ func runEvaluate(ctx context.Context, dir string, args []string, out io.Writer) 
 	fs := flags("evaluate", out)
 	asJSON := fs.Bool("json", false, "Emit JSON")
 	extensions := fs.String("ext", "", "Comma-separated source extensions")
-	fs.IntVar(&opts.Window, "window", opts.Window, "Latest first-parent commits to sample from")
+	fs.IntVar(&opts.Window, "window", opts.Window, "Latest non-merge commits to sample from")
 	fs.IntVar(&opts.Stride, "stride", opts.Stride, "Hold out every N-th commit")
-	fs.IntVar(&opts.Offset, "offset", 0, "First-parent commits below HEAD where the window starts")
+	fs.IntVar(&opts.Offset, "offset", 0, "Non-merge commits below the latest where the window starts")
+	fs.IntVar(&opts.CaseMaxFiles, "case-max-files", opts.CaseMaxFiles, "Maximum paths per held-out commit")
 	fs.StringVar(&opts.Prefix, "prefix", "", "Source path prefix")
 	filterFlags(fs, &opts.Options)
 	positional, err := parseArgs(fs, args)
@@ -298,11 +300,11 @@ func renderEvaluation(out io.Writer, e index.Evaluation) error {
 	var b strings.Builder
 	o := e.Options
 	fmt.Fprintf(&b, "Held-out evaluation · snapshot %s\n", e.Head)
-	fmt.Fprintf(&b, "Sample: every %d of %d first-parent commits, %d below HEAD", o.Stride, o.Window, o.Offset)
+	fmt.Fprintf(&b, "Sample: every %d of %d non-merge commits of 2..%d paths, %d below the latest", o.Stride, o.Window, o.CaseMaxFiles, o.Offset)
 	if o.Prefix != "" || len(o.Extensions) > 0 {
 		fmt.Fprintf(&b, " · sources %q %s", o.Prefix, strings.Join(o.Extensions, ","))
 	}
-	fmt.Fprintf(&b, "\nCases: %d of %d sampled · skipped: %d merges, %d by size, %d without source, %d without targets\n", len(e.Cases), e.Sampled, e.Skipped.Merges, e.Skipped.Size, e.Skipped.NoSource, e.Skipped.NoTargets)
+	fmt.Fprintf(&b, "\nCases: %d of %d sampled · skipped: %d by size, %d without source, %d without targets\n", len(e.Cases), e.Sampled, e.Skipped.Size, e.Skipped.NoSource, e.Skipped.NoTargets)
 	fmt.Fprintf(&b, "Filters: %s\n\n", filters(o.Options))
 	fmt.Fprintf(&b, "%-10s %4s %6s %6s %10s %8s %9s\n", "predictor", "k", "hits", "fp", "precision", "recall", "coverage")
 	for _, p := range e.Predictors {
