@@ -230,5 +230,68 @@ mean recall@5:
 - 90 days is the edge of the grid; a shorter half-life was not tested. Explore
   it on tuning windows only, and add repositories before trusting the choice.
 
-Reproduce with `scripts/tune-coupling.py WORKDIR tune` (the full grid) and
-`scripts/tune-coupling.py WORKDIR validate s1/f50/recent90 s3/f50/shared`.
+Reproduce with `scripts/tune-coupling.py WORKDIR adr-0010 tune` (the full
+grid) and `scripts/tune-coupling.py WORKDIR adr-0010 validate s1/f50/recent90
+s3/f50/shared`.
+
+## Replication on four new repositories — ADR-0011 — 2026-10-22
+
+Protocol fixed in ADR-0011 before any run. New full clones, same `.nibignore`
+plus `CHANGES.rst`, `CHANGES.md`, `CHANGELOG.rst`:
+
+| Repository (HEAD) | Commits | Paths | Index | Sources |
+|---|---:|---:|---:|---|
+| `pallets/flask` (`d086db8`) | 5,562 | 643 | 1.36 s / 38 MiB | `src/` `.py` |
+| `BurntSushi/ripgrep` (`3fce3b5`) | 2,287 | 467 | 0.91 s / 58 MiB | `.rs` |
+| `square/okhttp` (`e71e328`) | 6,489 | 3,640 | 3.14 s / 75 MiB | `.kt,.java` |
+| `django/django` (`0b4aaa7`) | 35,036 | 11,768 | 24.06 s / 180 MiB | `django/` `.py` |
+
+### Step 1 — replication (validation windows, precision@5)
+
+| Repository | Cases | current default | previous default | unfiltered co-change | global frequency |
+|---|---:|---:|---:|---:|---:|
+| flask | 2 | 0.0% | 0.0% | 0.0% | 0.0% |
+| ripgrep | 24 | **13.3%** | 11.7% | 13.3% | 3.3% |
+| okhttp | 31 | **20.0%** | 5.8% | 21.9% | 1.9% |
+| django | 59 | **21.0%** | 18.0% | 18.3% | 4.1% |
+
+The current defaults beat the previous ones on three of four new repositories
+(Flask is uninformative), so ADR-0010's choice **replicates**. Against
+unfiltered co-change they tie on ripgrep, lose on OkHttp and win on Django.
+Source conditioning beats global frequency on every informative repository.
+
+### Step 2 — extended grid (45 configurations × 7 repositories)
+
+The rule selected support 1, ≤ 100 paths, recent 90 d (tuning mean 20.7% vs
+17.8% for the defaults). On validation it scored a 16.7% mean against 16.5%,
+won on two repositories, tied on four and lost on Django. It needed four wins,
+so **the defaults stay**. Tuning rows at ≤ 50 paths:
+
+| Rank | support 1 | support 2 | support 3 |
+|---|---:|---:|---:|
+| shared | 16.7% | 14.5% | 12.9% |
+| recent 14 d | 17.2% | 15.0% | 12.9% |
+| recent 30 d | 17.4% | 15.2% | 13.1% |
+| recent 90 d | 17.8% | 15.6% | 13.5% |
+| recent 365 d | 17.9% | 15.5% | 13.5% |
+
+### Findings
+
+- Support 1 is best for every ranking; each extra unit of support costs about
+  two points of mean precision@5.
+- Recency beats `shared` on six of seven repositories. Half-lives under 90 days
+  are worse; 90 and 365 days are equivalent on average. Django, whose code is
+  long-lived, prefers 365 days or no decay.
+- **Protocol flaw:** `--max-files` also decides which commits become cases, so
+  comparing caps compares different populations. The selected ≤ 100 cap's
+  tuning advantage came almost entirely from Flask moving from one case to two.
+- **Protocol flaw:** sampling the first-parent chain skips merge-workflow
+  histories. 105 of Flask's 134 sampled validation commits were merges, leaving
+  two cases.
+
+Next: fix both flaws before further tuning. Fix the case population
+independently of the predictor's commit-size cap, and sample non-merge commits
+from the whole DAG rather than the first-parent chain.
+
+Reproduce with `scripts/tune-coupling.py WORKDIR adr-0011 tune` and
+`scripts/tune-coupling.py WORKDIR adr-0011 validate s1/f100/recent90 s1/f50/recent90 s3/f50/shared`.
