@@ -1,6 +1,7 @@
 package index
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -24,29 +25,34 @@ const (
 	PredictorFrequency = "frequency"
 )
 
-// EvalOptions fixes the held-out sample before any result is seen.
+// EvalOptions fixes the held-out sample before any result is seen. The
+// embedded Options configure the predictor only, never the cases (ADR-0012).
 type EvalOptions struct {
 	Options
-	Window     int      `json:"window"`
-	Offset     int      `json:"offset,omitempty"`
-	Stride     int      `json:"stride"`
-	Prefix     string   `json:"source_prefix,omitempty"`
-	Extensions []string `json:"source_extensions,omitempty"`
+	Window       int      `json:"window"`
+	Offset       int      `json:"offset,omitempty"`
+	Stride       int      `json:"stride"`
+	CaseMaxFiles int      `json:"case_max_files"`
+	Prefix       string   `json:"source_prefix,omitempty"`
+	Extensions   []string `json:"source_extensions,omitempty"`
 }
 
-// DefaultEvalOptions reproduces the exploratory sample: every third of the
-// latest 400 first-parent commits, with Nib's default filters.
+// DefaultEvalOptions samples every third of the latest 400 non-merge commits,
+// cases of up to 50 paths, with Nib's default filters.
 func DefaultEvalOptions() EvalOptions {
 	opts := DefaultOptions()
 	opts.Limit = Cutoffs[len(Cutoffs)-1]
 	opts.Evidence = 0
-	return EvalOptions{Options: opts, Window: 400, Stride: 3}
+	return EvalOptions{Options: opts, Window: 400, Stride: 3, CaseMaxFiles: 50}
 }
 
 // Validate rejects an empty sample.
 func (o EvalOptions) Validate() error {
 	if o.Window < 1 || o.Stride < 1 || o.Offset < 0 {
 		return errors.New("window and stride must be positive; offset must not be negative")
+	}
+	if o.CaseMaxFiles < 2 {
+		return errors.New("case-max-files must be at least 2")
 	}
 	return o.Options.Validate()
 }
@@ -61,7 +67,6 @@ type HoldoutCase struct {
 
 // Skipped counts sampled commits that could not become a case, by reason.
 type Skipped struct {
-	Merges    int `json:"merges"`
 	Size      int `json:"size"`
 	NoSource  int `json:"no_source"`
 	NoTargets int `json:"no_targets"`
@@ -95,7 +100,7 @@ type Evaluation struct {
 }
 
 // Evaluate holds out sampled commits and asks each predictor, trained only on
-// strict ancestors, which other files the commit changed (ADR-0009).
+// strict ancestors, which other files the commit changed (ADR-0009, ADR-0012).
 func (s *Store) Evaluate(ctx context.Context, opts EvalOptions) (Evaluation, error) {
 	e := Evaluation{Options: opts, Cases: []HoldoutCase{}}
 	if err := opts.Validate(); err != nil {
@@ -110,21 +115,21 @@ func (s *Store) Evaluate(ctx context.Context, opts EvalOptions) (Evaluation, err
 			return errors.New("empty index; run nib index")
 		}
 		e.Head = m.Head
-		chain, err := firstParentChain(ctx, tx, m.Head, opts.Offset, opts.Window)
+		sample, err := sampleCommits(ctx, tx, opts)
 		if err != nil {
 			return err
 		}
+		e.Sampled = len(sample)
 		h := newTrainingSet(opts.Options)
-		for i := 0; i < len(chain); i += opts.Stride {
-			e.Sampled++
-			if err := h.advanceTo(ctx, tx, chain[i]); err != nil {
+		for _, commit := range sample {
+			if err := h.advanceTo(ctx, tx, commit); err != nil {
 				return err
 			}
-			c, ok := h.holdout(tx, chain[i], opts, &e.Skipped)
+			c, ok := h.holdout(tx, commit, opts, &e.Skipped)
 			if !ok {
 				continue
 			}
-			if c.Predictions, err = h.predict(ctx, tx, c.Source, chain[i].Timestamp); err != nil {
+			if c.Predictions, err = h.predict(ctx, tx, c.Source, commit.Timestamp); err != nil {
 				return err
 			}
 			e.Cases = append(e.Cases, c)
@@ -137,43 +142,77 @@ func (s *Store) Evaluate(ctx context.Context, opts EvalOptions) (Evaluation, err
 	return e, err
 }
 
-// firstParentChain returns up to window commits, oldest first, ending offset
-// first-parent commits below head.
-func firstParentChain(ctx context.Context, tx *bolt.Tx, head string, offset, window int) ([]storedCommit, error) {
-	var chain []storedCommit
-	for oid := head; oid != "" && len(chain) < offset+window; {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		c, err := commitByOID(tx, oid)
-		if err != nil {
-			return nil, err
-		}
-		chain = append(chain, c)
-		oid = ""
-		if len(c.Parents) > 0 {
-			oid = c.Parents[0]
-		}
+// sampleCommits holds out every stride-th commit of the window, in index
+// order: parents before children, so the training set mostly grows.
+func sampleCommits(ctx context.Context, tx *bolt.Tx, opts EvalOptions) ([]storedCommit, error) {
+	window, err := sampleWindow(ctx, tx, opts.Offset, opts.Window)
+	var sample []storedCommit
+	for i := 0; i < len(window); i += opts.Stride {
+		sample = append(sample, window[i])
 	}
-	chain = chain[min(offset, len(chain)):]
-	slices.Reverse(chain)
-	return chain, nil
+	slices.SortFunc(sample, func(a, b storedCommit) int { return cmp.Compare(a.ID, b.ID) })
+	return sample, err
+}
+
+// sampleWindow returns up to window non-merge commits below the offset latest
+// ones. The index holds exactly the indexed HEAD's history; ordering by author
+// time and OID keeps the window independent of how the index was built.
+func sampleWindow(ctx context.Context, tx *bolt.Tx, offset, window int) ([]storedCommit, error) {
+	var commits []storedCommit
+	err := bucket(tx, "commits").ForEach(func(id, _ []byte) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		c, err := readCommit(tx, id)
+		if err == nil && len(c.Parents) <= 1 {
+			commits = append(commits, c)
+		}
+		return err
+	})
+	slices.SortFunc(commits, func(a, b storedCommit) int {
+		return cmp.Or(cmp.Compare(a.Timestamp, b.Timestamp), strings.Compare(a.OID, b.OID))
+	})
+	end := max(len(commits)-offset, 0)
+	return commits[max(end-window, 0):end], err
 }
 
 // trainingSet is what the current held-out commit may learn from: its strict
-// ancestors and their global file frequencies, grown along the chain.
+// ancestors and their global file frequencies.
 type trainingSet struct {
 	opts      Options
 	ancestors map[string]struct{}
 	frequency map[uint64]*candidate
+	previous  string
 }
 
 func newTrainingSet(opts Options) *trainingSet {
-	return &trainingSet{opts: opts, ancestors: map[string]struct{}{}, frequency: map[uint64]*candidate{}}
+	h := &trainingSet{opts: opts}
+	h.reset()
+	return h
 }
 
+func (h *trainingSet) reset() {
+	h.ancestors, h.frequency = map[string]struct{}{}, map[uint64]*candidate{}
+}
+
+// advanceTo makes the set the strict ancestors of c. It grows when c descends
+// from the previous sample and is rebuilt when c is on another branch.
 func (h *trainingSet) advanceTo(ctx context.Context, tx *bolt.Tx, c storedCommit) error {
-	return extendAncestors(ctx, tx, h.ancestors, c.Parents, func(ancestor storedCommit) {
+	if err := h.extend(ctx, tx, c.Parents); err != nil {
+		return err
+	}
+	if _, descends := h.ancestors[h.previous]; h.previous != "" && !descends {
+		h.reset()
+		if err := h.extend(ctx, tx, c.Parents); err != nil {
+			return err
+		}
+	}
+	h.previous = c.OID
+	return nil
+}
+
+func (h *trainingSet) extend(ctx context.Context, tx *bolt.Tx, parents []string) error {
+	return extendAncestors(ctx, tx, h.ancestors, parents, func(ancestor storedCommit) {
 		if !eligibleObservation(ancestor, h.opts) {
 			return
 		}
@@ -187,11 +226,7 @@ func (h *trainingSet) advanceTo(ctx context.Context, tx *bolt.Tx, c storedCommit
 
 // holdout turns a sampled commit into a case, or records why it cannot be one.
 func (h *trainingSet) holdout(tx *bolt.Tx, c storedCommit, opts EvalOptions, skipped *Skipped) (HoldoutCase, bool) {
-	switch {
-	case len(c.Parents) > 1:
-		skipped.Merges++
-		return HoldoutCase{}, false
-	case len(c.Files) < 2 || len(c.Files) > opts.MaxFiles:
+	if len(c.Files) < 2 || len(c.Files) > opts.CaseMaxFiles {
 		skipped.Size++
 		return HoldoutCase{}, false
 	}

@@ -19,8 +19,10 @@ Next milestones:
    older windows and validating on newer ones (ADR-0010) replaced the defaults
    with support 1 and recency ranking (90-day half-life). ADR-0011 replicated
    that choice on four new repositories (Flask, ripgrep, OkHttp, Django).
-   Next: make the evaluation population independent of `--max-files` and
-   sample merge-workflow histories before tuning further.
+   ADR-0012 fixed the case population: `--case-max-files` is separate from the
+   predictor's `--max-files`, and non-merge commits are sampled from the whole
+   DAG (Flask: 67 cases instead of 2). Earlier numbers are not comparable.
+   Next: re-run the replication under ADR-0012 before tuning further.
 2. Measure real repositories at increasing sizes and profile ingestion/query costs.
    Initial Astro smoke completed; repeat under controlled conditions and include
    another repository size before making capacity claims.
