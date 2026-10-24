@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -50,6 +51,23 @@ func send(m Model, s string) (Model, tea.Cmd) {
 	return next.(Model), cmd
 }
 
+// fakeHistory records calls; related answers every query.
+type fakeHistory struct {
+	refreshErr error
+	related    []Related
+	relatedErr error
+
+	refreshes int
+	filesArg  []string
+	limitArg  int
+}
+
+func (f *fakeHistory) Refresh() error { f.refreshes++; return f.refreshErr }
+func (f *fakeHistory) Related(files []string, limit int) ([]Related, error) {
+	f.filesArg, f.limitArg = files, limit
+	return f.related, f.relatedErr
+}
+
 type fakeLogger struct {
 	out      string
 	err      error
@@ -70,7 +88,7 @@ func sampleModelWithLogger() (Model, *fakeRepo, *fakeLogger) {
 		{Path: "c.go", Status: 'A', Staged: true},
 	}}
 	lg := &fakeLogger{out: "abc123 feat: x\n"}
-	return New(repo, lg), repo, lg
+	return New(repo, lg, &fakeHistory{}), repo, lg
 }
 
 func sampleModel() (Model, *fakeRepo) {
@@ -93,7 +111,7 @@ func TestNewLoadsFilesAndPreMarksStaged(t *testing.T) {
 }
 
 func TestNewPropagatesStatusError(t *testing.T) {
-	m := New(&fakeRepo{statusErr: errors.New("boom")}, &fakeLogger{})
+	m := New(&fakeRepo{statusErr: errors.New("boom")}, &fakeLogger{}, &fakeHistory{})
 	if m.err == nil {
 		t.Error("expected err set when Status fails")
 	}
@@ -378,14 +396,26 @@ func TestCommitSuccessReloadsLog(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("commit success should return a reload command")
 	}
-	msg := cmd()
-	if _, isQuit := msg.(tea.QuitMsg); isQuit {
-		t.Fatal("commit success must not quit")
-	}
-	ll, ok := msg.(logLoadedMsg)
+	ll, ok := batched[logLoadedMsg](cmd)
 	if !ok || ll.content != "new log\n" {
-		t.Errorf("expected reloaded log, got %T %+v", msg, msg)
+		t.Errorf("expected reloaded log, got %+v", ll)
 	}
+}
+
+// batched runs every command of a tea.Batch and returns the first message of
+// type T. A quit anywhere in the batch fails the lookup.
+func batched[T tea.Msg](cmd tea.Cmd) (T, bool) {
+	var zero T
+	for _, c := range cmd().(tea.BatchMsg) {
+		msg := c()
+		if _, quit := msg.(tea.QuitMsg); quit {
+			return zero, false
+		}
+		if t, ok := msg.(T); ok {
+			return t, true
+		}
+	}
+	return zero, false
 }
 
 func TestQuitKeys(t *testing.T) {
@@ -467,10 +497,9 @@ func TestInitLoadsLog(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("Init should return a log-load command")
 	}
-	msg := cmd()
-	ll, ok := msg.(logLoadedMsg)
+	ll, ok := batched[logLoadedMsg](cmd)
 	if !ok {
-		t.Fatalf("expected logLoadedMsg, got %T", msg)
+		t.Fatal("expected a logLoadedMsg")
 	}
 	if ll.content != lg.out {
 		t.Errorf("log content = %q, want %q", ll.content, lg.out)
@@ -682,5 +711,213 @@ func TestNewStartsWithLogLoading(t *testing.T) {
 	m, _ := sampleModel()
 	if !m.logLoading {
 		t.Error("the log is fetched by Init, so the panel must start as loading")
+	}
+}
+
+func historyModel(h *fakeHistory) Model {
+	repo := &fakeRepo{status: []git.FileChange{
+		{Path: "a.go", Status: 'M'},
+		{Path: "b.go", Status: 'M'},
+	}}
+	return New(repo, &fakeLogger{}, h)
+}
+
+// run executes cmd and feeds its message back, as the Bubble Tea loop would.
+func run(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected a command")
+	}
+	next, _ := m.Update(cmd())
+	return next.(Model)
+}
+
+func TestInitRefreshesHistoryAndThenQueriesMarkedFiles(t *testing.T) {
+	h := &fakeHistory{related: []Related{{Path: "b.go", Ratio: 0.75}}}
+	m := historyModel(h)
+	if !m.historyBusy {
+		t.Fatal("the index is refreshed by Init, so history must start busy")
+	}
+	m, cmd := send(m, "space") // mark a.go while the refresh is running
+	if cmd != nil {
+		t.Error("no query while the index is being refreshed")
+	}
+	next, cmd := m.Update(historyRefreshedMsg{})
+	m = run(t, next.(Model), cmd)
+	if h.refreshes != 0 || !reflect.DeepEqual(h.filesArg, []string{"a.go"}) || h.limitArg != relatedLimit {
+		t.Errorf("query files %v limit %d", h.filesArg, h.limitArg)
+	}
+	if !reflect.DeepEqual(m.related, h.related) {
+		t.Errorf("related = %+v", m.related)
+	}
+}
+
+func TestMarkingQueriesAndUnmarkingAllClears(t *testing.T) {
+	h := &fakeHistory{related: []Related{{Path: "b.go"}}}
+	m := historyModel(h)
+	m.historyBusy = false
+	m, cmd := send(m, "space")
+	m = run(t, m, cmd)
+	if len(m.related) != 1 {
+		t.Fatalf("related = %+v", m.related)
+	}
+	m, cmd = send(m, "space")
+	if cmd != nil || m.related != nil {
+		t.Errorf("nothing marked: no query and no panel, got %+v", m.related)
+	}
+}
+
+func TestStaleRelatedResultIsDropped(t *testing.T) {
+	m := historyModel(&fakeHistory{})
+	m.historyBusy = false
+	m, first := send(m, "space") // a.go
+	m, _ = send(m, "j")
+	m, second := send(m, "space") // a.go + b.go
+	m = run(t, m, second)
+	m.related = []Related{{Path: "kept"}}
+	next, _ := m.Update(first())
+	if got := next.(Model).related; len(got) != 1 || got[0].Path != "kept" {
+		t.Errorf("an answer for an older marked set replaced a newer one: %+v", got)
+	}
+}
+
+func TestCommitSuccessRefreshesHistory(t *testing.T) {
+	h := &fakeHistory{}
+	m := historyModel(h)
+	m.historyBusy = false
+	next, cmd := m.Update(commitDoneMsg{})
+	if !next.(Model).historyBusy {
+		t.Error("a new commit makes the index stale")
+	}
+	for _, msg := range cmd().(tea.BatchMsg) {
+		msg()
+	}
+	if h.refreshes != 1 {
+		t.Errorf("refreshes = %d, want 1", h.refreshes)
+	}
+}
+
+func TestStaleIndexRefreshesOnceThenGivesUp(t *testing.T) {
+	h := &fakeHistory{relatedErr: ErrStaleHistory}
+	m := historyModel(h)
+	m.historyBusy = false
+	m, cmd := send(m, "space")
+	next, cmd := m.Update(cmd())
+	m = next.(Model)
+	if !m.historyBusy || cmd == nil {
+		t.Fatal("a stale index (commit made outside nib) must trigger a refresh")
+	}
+	m = run(t, m, cmd) // refreshed -> queries again
+	next, cmd = m.Update(relatedLoadedMsg{gen: m.relatedGen, err: ErrStaleHistory})
+	m = next.(Model)
+	if cmd != nil || m.relatedErr == nil {
+		t.Errorf("a second stale answer must not loop: cmd=%v err=%v", cmd != nil, m.relatedErr)
+	}
+}
+
+func TestHistoryFailureNeverBlocksCommitting(t *testing.T) {
+	m := historyModel(&fakeHistory{})
+	next, _ := m.Update(historyRefreshedMsg{err: errors.New("shallow")})
+	m = next.(Model)
+	m, cmd := send(m, "space")
+	if cmd != nil || m.historyErr == nil {
+		t.Errorf("no queries against a broken index: %v", m.historyErr)
+	}
+	m.message = "x"
+	if _, cmd = send(m, "enter"); cmd == nil {
+		t.Error("committing must still work")
+	}
+}
+
+func TestRelatedLinesFlagUnmarkedWorkingTreeFiles(t *testing.T) {
+	m := historyModel(&fakeHistory{})
+	m.historyBusy = false
+	m.staged["a.go"] = true
+	m.related = []Related{{Path: "b.go", Ratio: 0.75}, {Path: "docs/x.md", Ratio: 0.5}}
+	lines := m.relatedLines(80)
+	if len(lines) != 3 || !strings.Contains(lines[1], "+ b.go") || !strings.Contains(lines[1], "75%") || !strings.Contains(lines[2], "· docs/x.md") {
+		t.Errorf("lines = %q", lines)
+	}
+	m.staged["a.go"] = false
+	if lines := m.relatedLines(80); lines != nil {
+		t.Errorf("nothing marked must hide the panel: %q", lines)
+	}
+}
+
+func TestPollRefreshKeepsMarksAndAdoptsExternalStaging(t *testing.T) {
+	m, _ := sampleModel() // a.go, b.go unmarked; c.go staged in git
+	m.cursor = 1
+	m, _ = send(m, "space")  // mark b.go
+	m.staged["c.go"] = false // the user unmarked a git-staged file
+	next, _ := m.Update(statusLoadedMsg{files: []git.FileChange{
+		{Path: "new.go", Status: '?'},
+		{Path: "a.go", Status: 'M', Staged: true}, // git add from another terminal
+		{Path: "b.go", Status: 'M'},
+		{Path: "c.go", Status: 'A', Staged: true},
+	}})
+	m = next.(Model)
+	want := map[string]bool{"new.go": false, "a.go": true, "b.go": true, "c.go": false}
+	if !reflect.DeepEqual(m.staged, want) {
+		t.Errorf("marks %v, want %v", m.staged, want)
+	}
+	if m.files[m.cursor].Path != "b.go" {
+		t.Errorf("cursor on %s, want it to follow b.go", m.files[m.cursor].Path)
+	}
+}
+
+func TestPollRequeriesOnlyWhenTheMarkedSetChanges(t *testing.T) {
+	m := historyModel(&fakeHistory{})
+	m.historyBusy = false
+	m, _ = send(m, "space") // a.go
+	same := []git.FileChange{{Path: "a.go", Status: 'M'}, {Path: "b.go", Status: 'M'}, {Path: "x.go", Status: '?'}}
+	if _, cmd := m.Update(statusLoadedMsg{files: same}); cmd != nil {
+		t.Error("an unrelated working-tree change must not query history")
+	}
+	gone := []git.FileChange{{Path: "b.go", Status: 'M'}}
+	next, _ := m.Update(statusLoadedMsg{files: gone})
+	if next.(Model).relatedGen == m.relatedGen {
+		t.Error("a marked file leaving the tree changes the question")
+	}
+	if _, cmd := m.Update(statusLoadedMsg{err: errors.New("boom")}); cmd != nil {
+		t.Error("a failed poll keeps the current list")
+	}
+}
+
+func TestPollTickReloadsStatusAndLogAndSchedulesTheNext(t *testing.T) {
+	m, _ := sampleModel()
+	m.logLoading = false
+	next, cmd := m.Update(pollMsg{})
+	if cmd == nil || next.(Model).logLoading {
+		t.Fatal("a poll reloads in the background, without the loading placeholder")
+	}
+	if _, ok := batched[statusLoadedMsg](cmd); !ok {
+		t.Error("a poll must reload the working tree")
+	}
+}
+
+func TestExternalCommitRefreshesHistory(t *testing.T) {
+	m := historyModel(&fakeHistory{})
+	m.historyBusy = false
+	m.logLoading = false
+	m.logContent = "aaa first\n"
+	next, cmd := m.Update(logLoadedMsg{content: "aaa first\n"})
+	if cmd != nil || next.(Model).historyBusy {
+		t.Error("an unchanged log is not a new commit")
+	}
+	next, cmd = m.Update(logLoadedMsg{content: "bbb second\naaa first\n"})
+	if cmd == nil || !next.(Model).historyBusy {
+		t.Error("a new commit made outside nib must refresh the index")
+	}
+}
+
+func TestRelatedRowsFitTheColumn(t *testing.T) {
+	m := historyModel(&fakeHistory{})
+	m.historyBusy = false
+	m.staged["a.go"] = true
+	m.related = []Related{{Path: "CHANGELOG.md", Ratio: 0.75}}
+	for _, line := range m.relatedLines(40) {
+		if w := len([]rune(line)); w > 40 {
+			t.Errorf("%q is %d columns wide, want <= 40", line, w)
+		}
 	}
 }

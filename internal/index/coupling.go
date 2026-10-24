@@ -36,6 +36,9 @@ type Options struct {
 // ErrIgnoredPath indicates that a query's source is excluded by .nibignore.
 var ErrIgnoredPath = errors.New("path is excluded by .nibignore")
 
+// ErrNoHistory indicates a path the index has never seen.
+var ErrNoHistory = errors.New("path has no indexed history (paths are repository-relative; renames remain separate)")
+
 // DefaultOptions are the configuration chosen on held-out tuning windows and
 // confirmed on newer validation windows (ADR-0010): every observation counts,
 // mass changes are excluded and recent co-changes weigh more.
@@ -127,7 +130,7 @@ func (s *Store) Coupled(ctx context.Context, path string, opts Options) (Report,
 		r.Head = m.Head
 		fid := bucket(tx, "files").Get([]byte(path))
 		if fid == nil {
-			return errors.New("path has no indexed history (paths are repository-relative; renames remain separate)")
+			return ErrNoHistory
 		}
 		ancestors, err := ancestorsBefore(ctx, tx, opts.Before)
 		if err != nil {

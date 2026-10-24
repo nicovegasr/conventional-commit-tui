@@ -63,8 +63,9 @@ The domain packages split **pure logic** (parsing, ranking, formatting — fully
 tested) from a **thin shell-out seam** (`var run`/`var gitLog…`, stubbed in
 tests). This is what makes the ≥80% domain coverage real (ADR-0002).
 
-The UI now depends on **two injected ports**: `Repo` (status/stage/commit) y
-`Logger` (git log read-only). La sesión es **persistente**: un commit exitoso
+The UI now depends on **three injected ports**: `Repo` (status/stage/commit),
+`Logger` (git log read-only) y `History` (índice de historial: refresco y
+archivos relacionados con lo marcado, ADR-0014). La sesión es **persistente**: un commit exitoso
 refresca el estado y no cierra la app (ADR-0007). `layout()` calcula una banda
 de **dos columnas** (archivos ‖ log) que comparten `View()` y `hitTest()`, de
 modo que el render y la detección de clics usan la misma geometría.

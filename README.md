@@ -1,99 +1,150 @@
 # nib
 
-Local repository intelligence from Git history, for humans and developer tools.
-Nib's analytical core indexes the history reachable from HEAD and explains which
-files have changed together, with counts and commit evidence. The existing
-conventional-commit TUI remains available when invoked without arguments.
+**English** · [Español](README.es.md)
 
-## Build and use
+![CI](https://github.com/nicovegasr/nib-git/actions/workflows/ci.yml/badge.svg)
 
-Requires Go 1.22+ and Git.
+A terminal tool to write [Conventional Commits](https://www.conventionalcommits.org/) in one line and **not forget anything**: while you mark files, nib tells you which other files usually change with them, according to the repository's git history.
 
-```sh
-make build
-./nib index
-./nib coupled internal/inventory/service.go
-./nib coupled internal/inventory/service.go --min-support 2 --json
-./nib coupled internal/inventory/service.go --before <commit-oid>
-./nib evaluate --prefix internal/ --ext .go   # held-out scoring vs baselines
+Built to stay open in the VSCode terminal and commit on the fly.
+
+![nib: mark a file and its related files show up](assets/tui.gif)
+
+---
+
+## What you get
+
+1. **One-line commits**: mark files → pick the type → type the message → `enter`. Mouse or keyboard.
+2. **Related files**: what usually changes with the files you marked, and which of those are modified but not marked (the classic forgotten test).
+3. **Analysis from the CLI**: `nib coupled <file>` explains what changes with a file, with percentages and the commits that back them.
+4. **Measured, not promised**: `nib evaluate` checks on real commits whether the suggestions hit. Results below.
+
+Everything is local: nib only reads your repository through `git` and keeps its index inside `.git/`.
+
+---
+
+## Install
+
+Requires Go 1.22+ and git.
+
+```bash
+git clone https://github.com/nicovegasr/nib-git
+cd nib-git
+make build                     # builds ./nib
+cp nib ~/.local/bin/           # or any folder on your PATH
 ```
 
-Run inside the repository to analyze. File arguments are relative to its root,
-including when invoked from a subdirectory. Use `nib --help` for all options.
-After building, the binary can also be invoked by absolute path from another
-repository; no repository contents are uploaded.
+Then, inside any repository:
 
-Create a `.nibignore` at the repository root to omit noisy paths from related
-file results. It uses one basename glob or directory name per line; blank lines
-and `#` comments are ignored. For example:
+```bash
+nib
+```
+
+---
+
+## The TUI — commit in one line
+
+| Action | Keyboard | Mouse |
+|---|---|---|
+| Mark / unmark a file | `space` | click the file |
+| Move through the list | `j` / `k` or arrows | — |
+| Pick the type (`feat`, `fix`, …) | `tab` + its initial | click `[ feat ▾ ]` |
+| Type the message and commit | type + `enter` | click the message |
+| Go back / quit | `esc` · `q` · `ctrl+c` | — |
+
+Below the commit line you see the exact subject that will be created (`→ feat: … .`), trailing period included. nib runs `git add` **only on the marked files**, never `git add .`.
+
+The session stays open after committing: the file list and the git log reload every 2 s, so editor changes, `git add` or commits made from another terminal show up on their own. Your marks are kept.
+
+### Related files
+
+When you mark files, the right column shows the five that most often change with them:
+
+- yellow `+`: **modified and not marked**. You are probably forgetting it.
+- grey `·`: usually changes with the marked files, but you have not touched it.
+- `↔` in the file list: the same hint, next to the file.
+
+The percentage is the share of the marked file's commits that also touched the other one. The index is created on first use (a few seconds in the background on a large repository) and kept up to date after every commit, checkout or rebase. If anything fails, the panel collapses to one grey line and you can still commit.
+
+Below 80 columns the right column hides, so it never gets in the way of the minimal flow.
+
+---
+
+## What usually changes with this file? — `nib coupled`
+
+![nib coupled in the terminal](assets/coupled.png)
+
+```bash
+nib index                                      # create or update the index
+nib coupled internal/ui/model.go               # related files, with evidence
+nib coupled internal/ui/model.go --json        # output for other tools
+nib coupled internal/ui/model.go --before v1.0 # only history before a commit
+```
+
+Each row says how many commits both files shared (`6/7`) and cites concrete commits you can open with `git show`. By default every co-change counts, mass commits (more than 50 files) are ignored and recent history weighs more (90-day half-life).
+
+To cut noise (lockfiles, changelogs, generated code), add a `.nibignore` at the root with one glob or directory per line. No reindexing needed:
 
 ```gitignore
 *.lock
-*-lock.yaml
 package-lock.json
+CHANGELOG.md
 dist/
-packages/generated/
 ```
 
-Directory names ending in `/` match that directory at any depth. Ignore rules
-filter candidate relationships without changing the source-file denominator;
-the source path itself cannot be ignored. Changes take effect immediately and
-do not require rebuilding the history index.
+---
 
-Use `--before <commit-oid>` to query only commits that are strict ancestors of
-an indexed commit. This supports historical comparisons without including the
-cutoff commit or later changes; the index must still be current at `HEAD`.
+## Does it actually work? — `nib evaluate`
 
-## What the first analytical slice does
+`nib evaluate` hides past commits and asks nib, using **only the history before** each one, which other files changed. It compares against two baselines: plain co-change counting with no filters (`co-change`) and suggesting the repository's most-touched files (`frequency`).
 
-- Persists commit metadata and file changes in the current worktree's Git
-  directory (`nib/index.db`), outside the tracked working tree.
-- Streams initial history and incrementally imports new reachable commits.
-- Refuses stale queries and divergent histories; `nib index --rebuild` replaces
-  the snapshot atomically. Failed imports preserve the previous index.
-- Computes directional file co-change: shared eligible commits divided by
-  eligible commits touching the source file.
-- Returns exact counts, filters, the indexed HEAD and bounded commit evidence,
-  as readable text or JSON.
+Precision of the top 5 suggestions on each repository's most recent commits (parameters were tuned on older commits):
 
-Defaults require at least **3 shared observations** and exclude commits touching
-more than **50 paths** from both numerator and denominator. A ratio of 100% over
-3 observations is not statistical certainty. Historical co-change does not prove
-dependency or predict a regression.
+| Repository | nib | co-change | frequency |
+|---|---:|---:|---:|
+| fzf (Go) | **30.6%** | 23.9% | 18.0% |
+| Django (Python) | **13.1%** | 11.5% | 2.3% |
+| OkHttp (Kotlin/Java) | 20.0% | **21.9%** | 1.9% |
+| Flask (Python) | 18.6% | **19.3%** | 2.8% |
+| ripgrep (Rust) | 13.3% | 13.3% | 4.2% |
+| Astro (TypeScript) | 7.9% | 7.9% | 1.7% |
+| Personal blog (Astro) | 22.3% | **23.3%** | 11.6% |
+| mean of 7 repositories | **18.0%** | 17.3% | 6.1% |
 
-## Explicit boundaries
+The honest reading: looking at **what changes with your file** hits about 3 times more often on average than looking at what changes most overall (from 1.7× on fzf to 10× on OkHttp). nib's filters add little over plain co-change on these small samples (24–52 cases per repository); on larger samples the advantage is about 2.5 points. Methodology and full numbers in [docs/research/file-coupling-benchmarks.md](docs/research/file-coupling-benchmarks.md).
 
-The snapshot covers the DAG reachable from captured HEAD, not all refs. Merge
-metadata is retained, but merge diffs are excluded to avoid counting branch work
-twice; this omits conflict-resolution-only changes. Root commits are eligible,
-subject to the same size filter. There is no time-window filter yet.
-
-A file means a **path**. Renames preserve their source path as context but do not
-join identities across paths. Delete/recreate cycles at one path share history.
-Binary changes retain a binary marker instead of claiming known line counts.
-Shallow repositories and non-UTF-8 paths fail explicitly. Empty repositories
-need an initial commit. Each message/path token is limited to 16 MiB.
-
-This version does not implement symbol analysis, risk scoring, historical
-prediction evaluation or GitHub integration. Million-commit scale is unverified.
-See [the analysis design](docs/adr/0008-history-index-and-file-coupling.md).
-
-## Validation
-
-```sh
-make ci      # format, vet, lint, units, coverage, real Git integration
-make bench   # synthetic storage/query microbenchmarks; excludes Git ingestion
+```bash
+nib evaluate --prefix src/ --ext .ts,.tsx     # measure nib on your own repository
 ```
 
-Tests compare indexed results with a brute-force oracle over deterministic
-generated histories. Real Git tests cover incremental/rebuild equivalence,
-merges, rewrites, rename paths, binaries, worktrees and shallow history.
-See [benchmark methodology](docs/research/file-coupling-benchmarks.md).
+---
 
-## Docs
+## Limits
 
-- [Architecture](docs/architecture.md)
-- [Decisions](docs/adr/)
-- [Roadmap](docs/ROADMAP.md)
-- [Contributing](docs/contributing.md)
-- [Legacy TUI mockups](docs/ux-mockups.html)
+- A file is a **path**: renames do not join their history.
+- Only history reachable from `HEAD`; shallow clones (`--depth`) are rejected.
+- Historical co-change is not dependency nor a bug prediction: it is a hint.
+
+---
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | Packages, flow and design rules |
+| [docs/adr/](docs/adr/) | Decisions, one per file (index, evaluation, related-files panel…) |
+| [docs/research/file-coupling-benchmarks.md](docs/research/file-coupling-benchmarks.md) | Benchmarks and evaluations on real repositories |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | What comes next |
+| [docs/contributing.md](docs/contributing.md) | How to work on the repository |
+
+---
+
+## Development
+
+```bash
+make check   # format, vet, lint and tests (pre-commit)
+make ci      # all of the above + ≥ 80% coverage + real git integration
+make bench   # index microbenchmarks
+```
+
+The screenshots in this README are recorded with [vhs](https://github.com/charmbracelet/vhs) on a demo clone: `vhs assets/tapes/tui.tape` and `vhs assets/tapes/coupled.tape`.
