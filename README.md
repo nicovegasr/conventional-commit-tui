@@ -31,6 +31,7 @@ Requires Go 1.26+ and git.
 git clone https://github.com/nicovegasr/nib-git
 cd nib-git
 make build                     # builds ./nib
+make install                   # installs nib into ~/go/bin (run it from any repo)
 cp nib ~/.local/bin/           # or any folder on your PATH
 ```
 

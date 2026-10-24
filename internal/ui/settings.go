@@ -19,7 +19,8 @@ type command struct{ name, desc string }
 
 // commands is the palette's list; /audit and /stats join it in later phases.
 var commands = []command{
-	{"settings", "paneles, ratón, alcance del log, recarga"},
+	{"audit", "archivos que más cambian (hotspots)"},
+	{"settings", "paneles, ratón, alcance del log, recarga, audit"},
 }
 
 func (m Model) openPalette() Model {
@@ -72,6 +73,8 @@ func (m Model) runCommand() (Model, tea.Cmd) {
 	}
 	m.palette = false
 	switch matches[m.paletteIdx].name {
+	case "audit":
+		return m.openAudit()
 	case "settings":
 		m.settingsOpen, m.settingsIdx = true, 0
 	}
@@ -103,6 +106,8 @@ const (
 	rowRelated
 	rowMouse
 	rowReload
+	rowAuditDays
+	rowThreshold
 )
 
 // settingRow is one line of /settings. A row with a parent belongs to it: it
@@ -135,6 +140,8 @@ var settingRows = []settingRow{
 		}
 		return fmt.Sprintf("%d s ▾", s.ReloadSeconds)
 	}, nil},
+	{rowAuditDays, "/audit · ventana", "días que mira al abrirse", func(s settings.Settings) string { return fmt.Sprintf("%d días ▾", s.AuditDays) }, nil},
+	{rowThreshold, "/audit · umbral", "commits que marcan refactor?", func(s settings.Settings) string { return fmt.Sprintf("≥ %d ▾", s.AuditThreshold) }, nil},
 }
 
 func (m Model) updateSettings(key tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -183,9 +190,13 @@ func (m Model) change(row int) (Model, tea.Cmd) {
 		m.logLoading = true
 		apply = m.loadLog()
 	case rowReload:
-		m.prefs.ReloadSeconds = settings.NextReload(m.prefs.ReloadSeconds)
+		m.prefs.ReloadSeconds = settings.Next(settings.ReloadChoices, m.prefs.ReloadSeconds)
 		m.pollGen++
 		apply = m.poll()
+	case rowAuditDays:
+		m.prefs.AuditDays = settings.Next(settings.AuditDayChoices, m.prefs.AuditDays)
+	case rowThreshold:
+		m.prefs.AuditThreshold = settings.Next(settings.ThresholdChoices, m.prefs.AuditThreshold)
 	}
 	store, prefs := m.store, m.prefs
 	save := func() tea.Msg { return settingsSavedMsg{err: store.Save(prefs)} }

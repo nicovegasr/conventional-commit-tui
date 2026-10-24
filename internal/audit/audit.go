@@ -8,6 +8,7 @@ package audit
 
 import (
 	"os/exec"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,7 +20,35 @@ import (
 type Hotspot struct {
 	Path    string
 	Commits int // primary signal
-	// TODO(lines): +/- churn as a secondary context column.
+	Added   int // lines, context only
+	Deleted int
+}
+
+// Report is an audit: the ranked hotspots and the patterns that were skipped.
+type Report struct {
+	Hotspots []Hotspot
+	Ignored  []string
+}
+
+// Level is how worrying a hotspot's commit count is against the threshold.
+type Level int
+
+// Levels, from calm to "refactor?".
+const (
+	OK       Level = iota // under three quarters of the threshold
+	Watch                 // at least three quarters of the threshold
+	Refactor              // at or over the threshold
+)
+
+// LevelOf rates commits against threshold.
+func LevelOf(commits, threshold int) Level {
+	switch {
+	case commits >= threshold:
+		return Refactor
+	case commits*4 >= threshold*3:
+		return Watch
+	}
+	return OK
 }
 
 // defaultIgnore are obvious high-churn-by-design files, not code smells.
@@ -33,53 +62,68 @@ var defaultIgnore = []string{
 	"node_modules/",
 }
 
-// Run returns files ordered by commit frequency over the last `days` days.
-// `exclude` are extra inline excludes on top of the defaults and .auditignore.
-func Run(days int, exclude []string) ([]Hotspot, error) {
+// Run returns files ordered by commit frequency over the last `days` days,
+// skipping the defaults and .auditignore.
+func Run(days int) (Report, error) {
 	ignore, err := loadIgnore()
 	if err != nil {
-		return nil, err
+		return Report{}, err
 	}
-	out, err := gitLogNames(days)
+	out, err := gitLogNumstat(days)
 	if err != nil {
-		return nil, err
+		return Report{}, err
 	}
-	return rank(out, append(ignore, exclude...)), nil
+	return Report{Hotspots: rank(out, ignore), Ignored: ignore}, nil
 }
 
 // loadIgnore returns the defaults plus the optional local .auditignore, which
-// shares the .nibignore format.
+// shares the .nibignore format, each pattern once.
 func loadIgnore() ([]string, error) {
 	custom, err := pathignore.Load(".auditignore")
 	if err != nil {
 		return nil, err
 	}
-	return append(append([]string{}, defaultIgnore...), custom...), nil
+	ignore := append([]string{}, defaultIgnore...)
+	for _, p := range custom {
+		if !slices.Contains(ignore, p) {
+			ignore = append(ignore, p)
+		}
+	}
+	return ignore, nil
 }
 
-// gitLogNames returns the changed file paths (one per line) over the window.
-// Package var so tests can stub the shell-out and exercise rank directly.
-var gitLogNames = func(days int) (string, error) {
-	out, err := exec.Command("git", "log",
-		"--since", since(days), "--name-only", "--pretty=format:").Output()
+// gitLogNumstat returns one "added<TAB>deleted<TAB>path" line per commit and
+// file over the window. Package var so tests can stub the shell-out and
+// exercise rank directly.
+var gitLogNumstat = func(days int) (string, error) {
+	out, err := exec.Command("git", "log", "--since", since(days),
+		"--numstat", "--no-renames", "--pretty=format:").Output()
 	return string(out), err
 }
 
-// rank counts commits per file path, drops ignored paths, and orders by
-// descending commit frequency (the hotspot signal), then by path.
+// rank counts commits and lines per path, drops ignored paths, and orders by
+// descending commit frequency (the hotspot signal), then by path. Binary
+// files ("-" counts) add commits but no lines.
 func rank(out string, ignore []string) []Hotspot {
-	counts := map[string]int{}
+	byPath := map[string]*Hotspot{}
 	for _, line := range strings.Split(out, "\n") {
-		path := strings.TrimSpace(line)
-		if path == "" || pathignore.Matches(path, ignore) {
+		fields := strings.SplitN(line, "\t", 3)
+		if len(fields) != 3 || pathignore.Matches(fields[2], ignore) {
 			continue
 		}
-		counts[path]++
+		h := byPath[fields[2]]
+		if h == nil {
+			h = &Hotspot{Path: fields[2]}
+			byPath[fields[2]] = h
+		}
+		added, _ := strconv.Atoi(fields[0])
+		deleted, _ := strconv.Atoi(fields[1])
+		h.Commits, h.Added, h.Deleted = h.Commits+1, h.Added+added, h.Deleted+deleted
 	}
 
-	hotspots := make([]Hotspot, 0, len(counts))
-	for p, c := range counts {
-		hotspots = append(hotspots, Hotspot{Path: p, Commits: c})
+	hotspots := make([]Hotspot, 0, len(byPath))
+	for _, h := range byPath {
+		hotspots = append(hotspots, *h)
 	}
 	sort.Slice(hotspots, func(i, j int) bool {
 		a, b := hotspots[i], hotspots[j]

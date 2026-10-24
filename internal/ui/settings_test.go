@@ -36,16 +36,17 @@ func (f *fakeStore) Save(s settings.Settings) error {
 func storeModel(store *fakeStore) (Model, *fakeLogger) {
 	repo := &fakeRepo{status: []git.FileChange{{Path: "a.go", Status: 'M'}}}
 	lg := &fakeLogger{out: "abc123 feat: x\n"}
-	return New(repo, lg, &fakeHistory{}, store), lg
+	return New(repo, lg, &fakeHistory{}, store, &fakeAuditor{}), lg
 }
 
 // openSettings walks the palette into /settings.
 func openSettings(t *testing.T, m Model) Model {
 	t.Helper()
 	m, _ = send(m, "/")
+	m, _ = send(m, "s")
 	m, _ = send(m, "enter")
 	if !m.settingsOpen {
-		t.Fatal("/ + enter should open /settings")
+		t.Fatal("/s + enter should open /settings")
 	}
 	return m
 }
@@ -244,7 +245,7 @@ func TestClickingCommandsButtonThenItemOpensSettings(t *testing.T) {
 	if !m.palette {
 		t.Fatal("clicking / comandos opens the palette")
 	}
-	m = click(m, 4, m.layout().dropStart)
+	m = click(m, 4, m.layout().dropStart+1) // /audit, /settings
 	if !m.settingsOpen {
 		t.Error("clicking /settings opens it")
 	}

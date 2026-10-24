@@ -9,6 +9,11 @@ later goal — ADR-0004.)
 
 ### Added
 
+- `/audit` in the command palette: files ranked by the number of commits
+  touching them, with ±lines as context and `refactor?`/`vigilar` against a
+  threshold. `d` or a click cycles the window (7 · 30 · 90 · 365 days);
+  `/settings` sets the default window and the threshold. Excluded patterns are
+  listed under the table (ADR-0016).
 - `/` on an empty message opens a command palette (also the `/ comandos`
   footer button). `/settings` switches the git-log panel, the related-files
   panel and mouse capture on/off, sets the log scope and the auto-reload

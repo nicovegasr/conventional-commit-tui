@@ -72,12 +72,12 @@ func TestLoadFillsMissingKeysWithDefaults(t *testing.T) {
 }
 
 func TestLoadReplacesOutOfRangeValuesWithDefaults(t *testing.T) {
-	s, err := Load(write(t, "log_scope = \"custom\"\nreload_seconds = 7\n"))
+	s, err := Load(write(t, "log_scope = \"custom\"\nreload_seconds = 7\naudit_days = 3\naudit_threshold = 0\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.LogScope != ScopeCurrent || s.ReloadSeconds != 2 {
-		t.Errorf("got scope %q reload %d, want defaults", s.LogScope, s.ReloadSeconds)
+	if s != Default() {
+		t.Errorf("got %+v, want defaults", s)
 	}
 }
 
@@ -87,11 +87,11 @@ func TestLoadRejectsMalformedFile(t *testing.T) {
 	}
 }
 
-func TestNextReloadCyclesThroughOff(t *testing.T) {
+func TestNextCyclesThroughOff(t *testing.T) {
 	var got []int
 	r := 2
 	for range ReloadChoices {
-		r = NextReload(r)
+		r = Next(ReloadChoices, r)
 		got = append(got, r)
 	}
 	want := []int{5, 10, 0, 1, 2}

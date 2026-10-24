@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -88,7 +89,7 @@ func sampleModelWithLogger() (Model, *fakeRepo, *fakeLogger) {
 		{Path: "c.go", Status: 'A', Staged: true},
 	}}
 	lg := &fakeLogger{out: "abc123 feat: x\n"}
-	return New(repo, lg, &fakeHistory{}, &fakeStore{}), repo, lg
+	return New(repo, lg, &fakeHistory{}, &fakeStore{}, &fakeAuditor{}), repo, lg
 }
 
 func sampleModel() (Model, *fakeRepo) {
@@ -111,7 +112,7 @@ func TestNewLoadsFilesAndPreMarksStaged(t *testing.T) {
 }
 
 func TestNewPropagatesStatusError(t *testing.T) {
-	m := New(&fakeRepo{statusErr: errors.New("boom")}, &fakeLogger{}, &fakeHistory{}, &fakeStore{})
+	m := New(&fakeRepo{statusErr: errors.New("boom")}, &fakeLogger{}, &fakeHistory{}, &fakeStore{}, &fakeAuditor{})
 	if m.err == nil {
 		t.Error("expected err set when Status fails")
 	}
@@ -735,7 +736,7 @@ func historyModel(h *fakeHistory) Model {
 		{Path: "a.go", Status: 'M'},
 		{Path: "b.go", Status: 'M'},
 	}}
-	return New(repo, &fakeLogger{}, h, &fakeStore{})
+	return New(repo, &fakeLogger{}, h, &fakeStore{}, &fakeAuditor{})
 }
 
 // run executes cmd and feeds its message back, as the Bubble Tea loop would.
@@ -935,5 +936,54 @@ func TestRelatedRowsFitTheColumn(t *testing.T) {
 		if w := len([]rune(line)); w > 40 {
 			t.Errorf("%q is %d columns wide, want <= 40", line, w)
 		}
+	}
+}
+
+// longModel has 40 files in a 20-row terminal: more than fit.
+func longModel() Model {
+	var files []git.FileChange
+	for i := range 40 {
+		files = append(files, git.FileChange{Path: fmt.Sprintf("f%02d.go", i), Status: 'M'})
+	}
+	m := New(&fakeRepo{status: files}, &fakeLogger{}, &fakeHistory{}, &fakeStore{}, &fakeAuditor{})
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 20})
+	return next.(Model)
+}
+
+func TestLongFileListFitsTheTerminal(t *testing.T) {
+	m := longModel()
+	if lines := strings.Count(m.View(), "\n"); lines >= m.height {
+		t.Errorf("frame is %d rows in a %d-row terminal", lines, m.height)
+	}
+	if !strings.Contains(m.View(), "CAMBIOS") {
+		t.Error("the header must stay visible")
+	}
+}
+
+func TestFileListScrollsWithTheCursor(t *testing.T) {
+	m := longModel()
+	rows := m.fileRows()
+	for range rows {
+		m, _ = send(m, "j")
+	}
+	if m.fileTop != 1 || m.cursor != rows {
+		t.Fatalf("cursor %d top %d, want the list to scroll one row", m.cursor, m.fileTop)
+	}
+	if h := m.hitTest(5, m.layout().filesStart+rows-1); h.kind != hitFile || h.idx != m.cursor {
+		t.Errorf("a click on the last visible row = %+v, want file %d", h, m.cursor)
+	}
+	for range 50 {
+		m, _ = send(m, "k")
+	}
+	if m.fileTop != 0 || m.cursor != 0 {
+		t.Errorf("cursor %d top %d, want back at the top", m.cursor, m.fileTop)
+	}
+}
+
+func TestWheelMovesTheFileCursor(t *testing.T) {
+	m := longModel()
+	next, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
+	if next.(Model).cursor != 1 {
+		t.Error("the wheel moves through the file list")
 	}
 }

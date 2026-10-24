@@ -87,8 +87,12 @@ func (r Repository) ResolveCommit(ctx context.Context, revision string) (string,
 	return oid, nil
 }
 
-// IsAncestor distinguishes divergent history from command failures.
+// IsAncestor distinguishes divergent history from command failures. A commit
+// that no longer exists (rewritten, then garbage-collected) is not an ancestor.
 func (r Repository) IsAncestor(ctx context.Context, oid string) (bool, error) {
+	if command(ctx, r.Root, "cat-file", "-e", oid+"^{commit}").Run() != nil {
+		return false, nil
+	}
 	err := command(ctx, r.Root, "merge-base", "--is-ancestor", oid, r.Head).Run()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) && exit.ExitCode() == 1 {
