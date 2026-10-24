@@ -138,13 +138,8 @@ func runIndex(ctx context.Context, dir string, args []string, out io.Writer) err
 	if err != nil {
 		return err
 	}
-	store, err := index.Open(repo.IndexPath(), false)
+	result, err := update(ctx, repo, *rebuild)
 	if err != nil {
-		return err
-	}
-	result, updateErr := store.Update(ctx, repo, *rebuild)
-	closeErr := store.Close()
-	if err = errors.Join(updateErr, closeErr); err != nil {
 		return err
 	}
 	if *asJSON {
@@ -152,6 +147,45 @@ func runIndex(ctx context.Context, dir string, args []string, out io.Writer) err
 	}
 	_, err = fmt.Fprintf(out, "Indexed HEAD %s\nCommits: %d (%d new) · Paths: %d\n", result.Head, result.Commits, result.Added, result.Files)
 	return err
+}
+
+// update brings the repository's index up to HEAD in one transaction.
+func update(ctx context.Context, repo history.Repository, rebuild bool) (index.Result, error) {
+	store, err := index.Open(repo.IndexPath(), false)
+	if err != nil {
+		return index.Result{}, err
+	}
+	result, updateErr := store.Update(ctx, repo, rebuild)
+	return result, errors.Join(updateErr, store.Close())
+}
+
+// Refresh brings the index of the repository at dir up to HEAD, for callers
+// outside the CLI such as the TUI (ADR-0014).
+func Refresh(ctx context.Context, dir string) error {
+	repo, err := history.Open(ctx, dir)
+	if err != nil {
+		return err
+	}
+	_, err = update(ctx, repo, false)
+	return err
+}
+
+// Related ranks what usually changed with any of files, using the default
+// filters. It fails with index.ErrStale when HEAD moved since the last Refresh.
+func Related(ctx context.Context, dir string, files []string, limit int) ([]index.Relationship, error) {
+	repo, err := history.Open(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	opts := index.DefaultOptions()
+	opts.Limit, opts.Evidence = limit, 0
+	var related []index.Relationship
+	err = withFreshIndex(repo, func(store *index.Store, ignore []string) error {
+		opts.Ignore = ignore
+		related, err = store.CoupledWithAny(ctx, files, opts)
+		return err
+	})
+	return related, err
 }
 
 func runCoupled(ctx context.Context, dir string, args []string, out io.Writer) error {

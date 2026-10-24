@@ -255,3 +255,31 @@ func TestRealGitEvaluateHoldsOutCommits(t *testing.T) {
 		t.Fatalf("%v\n%s", err, text.String())
 	}
 }
+
+func TestRealGitRelatedAfterRefresh(t *testing.T) {
+	dir := repo(t)
+	for i := range 3 {
+		write(t, dir, "model.go", strings.Repeat("m", i+1))
+		write(t, dir, "model_test.go", strings.Repeat("t", i+1))
+		commit(t, dir)
+	}
+	write(t, dir, "other.go", "o")
+	commit(t, dir)
+
+	if _, err := Related(context.Background(), dir, []string{"model.go"}, 5); err == nil {
+		t.Fatal("queried before any index existed")
+	}
+	if err := Refresh(context.Background(), dir); err != nil {
+		t.Fatal(err)
+	}
+	related, err := Related(context.Background(), dir, []string{"model.go", "new.go"}, 5)
+	if err != nil || len(related) != 1 || related[0].Path != "model_test.go" || related[0].Ratio != 1 {
+		t.Fatalf("%+v %v", related, err)
+	}
+
+	write(t, dir, "other.go", "changed")
+	commit(t, dir)
+	if _, err := Related(context.Background(), dir, []string{"model.go"}, 5); !errors.Is(err, index.ErrStale) {
+		t.Errorf("a commit after the refresh must report a stale index: %v", err)
+	}
+}

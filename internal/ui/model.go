@@ -6,10 +6,15 @@
 // dropdown, and mouse clicks. Picking a type auto-advances to the message so
 // the keyboard hot path stays a single `tab` + letter. The type shortcut only
 // fires while the Type zone is focused, keeping it predictable.
+//
+// The right column shows what usually changes with the marked files above the
+// git log (ADR-0014), so a forgotten file is visible before committing.
 package ui
 
 import (
+	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -33,6 +38,24 @@ type Logger interface {
 	Log(scope string, limit int) (string, error)
 }
 
+// History is the narrow slice of the history index the related-files panel
+// needs (ADR-0014). Refresh brings the index up to HEAD; Related ranks what
+// usually changes with files and fails with ErrStaleHistory when HEAD moved.
+type History interface {
+	Refresh() error
+	Related(files []string, limit int) ([]Related, error)
+}
+
+// Related is a path that historically changed together with a marked file.
+type Related struct {
+	Path  string
+	Ratio float64 // share of that file's commits that also touched Path
+}
+
+// ErrStaleHistory reports an index behind HEAD, e.g. after a commit made
+// outside nib.
+var ErrStaleHistory = errors.New("history index is behind HEAD")
+
 // zone is the part of the UI currently driving the keyboard.
 type zone int
 
@@ -48,6 +71,16 @@ type commitDoneMsg struct{ err error }
 // logLoadedMsg carries the result of an async git-log fetch.
 type logLoadedMsg struct {
 	content string
+	err     error
+}
+
+// historyRefreshedMsg reports that the index caught up with HEAD, or why not.
+type historyRefreshedMsg struct{ err error }
+
+// relatedLoadedMsg answers the query numbered gen.
+type relatedLoadedMsg struct {
+	gen     int
+	related []Related
 	err     error
 }
 
@@ -75,18 +108,30 @@ type Model struct {
 	logErr     error
 	logLoading bool
 
+	history      History
+	showRelated  bool // related-files panel enabled (Phase 4 /settings will toggle it)
+	historyBusy  bool // index refresh in flight; queries wait for it
+	historyErr   error
+	related      []Related
+	relatedErr   error
+	relatedGen   int  // numbers queries; answers to older ones are dropped
+	staleRetried bool // one refresh per stale answer, never a loop
+
 	shortcuts map[string]int // type shortcut key -> index into commit.Types
 }
 
 // New builds the initial model and loads the working tree through repo.
-func New(repo Repo, logger Logger) Model {
+func New(repo Repo, logger Logger, history History) Model {
 	m := Model{
-		repo:       repo,
-		logger:     logger,
-		showLog:    true,
-		logScope:   "current",
-		logLoading: true, // Init fetches it
-		shortcuts:  typeShortcuts(),
+		repo:        repo,
+		logger:      logger,
+		showLog:     true,
+		logScope:    "current",
+		logLoading:  true, // Init fetches it
+		history:     history,
+		showRelated: true,
+		historyBusy: true, // Init refreshes it
+		shortcuts:   typeShortcuts(),
 	}
 	files, err := repo.Status()
 	if err != nil {
@@ -132,8 +177,54 @@ func (m Model) loadLog() tea.Cmd {
 	}
 }
 
+const relatedLimit = 5
+
+// refreshHistory brings the index up to HEAD off the UI goroutine. Callers set
+// historyBusy so that no query races the writer.
+func (m Model) refreshHistory() tea.Cmd {
+	history := m.history
+	return func() tea.Msg { return historyRefreshedMsg{err: history.Refresh()} }
+}
+
+// queryRelated asks what usually changes with the marked files. With nothing
+// marked it clears the panel; while the index refreshes it waits, and the
+// refresh queries when done.
+func (m Model) queryRelated() (Model, tea.Cmd) {
+	marked := m.stagedFiles()
+	m.relatedGen++
+	if len(marked) == 0 {
+		m.related, m.relatedErr = nil, nil
+		return m, nil
+	}
+	if !m.showRelated || m.historyBusy || m.historyErr != nil {
+		return m, nil
+	}
+	history, gen := m.history, m.relatedGen
+	return m, func() tea.Msg {
+		related, err := history.Related(marked, relatedLimit)
+		return relatedLoadedMsg{gen: gen, related: related, err: err}
+	}
+}
+
+// relatedLoaded stores the answer to the latest query. A stale index (a commit
+// made outside nib) is refreshed once and queried again.
+func (m Model) relatedLoaded(msg relatedLoadedMsg) (Model, tea.Cmd) {
+	if msg.gen != m.relatedGen {
+		return m, nil
+	}
+	if errors.Is(msg.err, ErrStaleHistory) && !m.staleRetried {
+		m.staleRetried, m.historyBusy = true, true
+		return m, m.refreshHistory()
+	}
+	m.related, m.relatedErr = msg.related, msg.err
+	if msg.err == nil {
+		m.staleRetried = false
+	}
+	return m, nil
+}
+
 // Init implements tea.Model.
-func (m Model) Init() tea.Cmd { return m.loadLog() }
+func (m Model) Init() tea.Cmd { return tea.Batch(m.loadLog(), m.refreshHistory()) }
 
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -145,6 +236,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logContent = msg.content
 		m.logErr = msg.err
 		return m, nil
+	case historyRefreshedMsg:
+		m.historyBusy, m.historyErr = false, msg.err
+		return m.queryRelated()
+	case relatedLoadedMsg:
+		return m.relatedLoaded(msg)
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -188,6 +284,7 @@ func (m Model) updateFiles(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.files) > 0 {
 			p := m.files[m.cursor].Path
 			m.staged[p] = !m.staged[p]
+			return m.queryRelated()
 		}
 	case "tab":
 		m.focus = zoneType
@@ -285,15 +382,16 @@ func (m Model) afterCommit(err error) (Model, tea.Cmd) {
 	} else {
 		m.message = ""
 		m.flash = "✓ commit creado"
-		m.logLoading = true
-		cmd = m.loadLog()
+		m.logLoading, m.historyBusy = true, true
+		cmd = tea.Batch(m.loadLog(), m.refreshHistory())
 	}
 	files, statusErr := m.repo.Status()
 	if statusErr != nil {
 		m.flash += " · no se pudo refrescar la lista"
 		return m, cmd
 	}
-	return m.withFiles(files), cmd
+	m, query := m.withFiles(files).queryRelated()
+	return m, tea.Batch(cmd, query)
 }
 
 // lastLine is the most specific line of a multi-line git error: hooks and git
@@ -343,6 +441,7 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.focus = zoneFiles
 		p := m.files[h.idx].Path
 		m.staged[p] = !m.staged[p]
+		return m.queryRelated()
 	case hitType:
 		m.focus = zoneType
 		m.dropOpen = !m.dropOpen
@@ -407,8 +506,9 @@ const headerRows = 2 // title + blank line above the file list
 
 const minWidthForLog = 80 // below this the minimal flow keeps the full width
 
-// logVisible reports whether the git-log panel should be drawn: enabled and the
-// terminal is wide enough that the minimal flow is not squeezed.
+// logVisible reports whether the right column (related files + git log) should
+// be drawn: enabled and the terminal is wide enough that the minimal flow is
+// not squeezed.
 func (m Model) logVisible() bool {
 	return m.showLog && m.width >= minWidthForLog
 }
@@ -418,7 +518,7 @@ func (m Model) leftColWidth() int {
 	return m.width / 2
 }
 
-const reservedBelow = 4 // blank + commit line + blank + help line under the band
+const reservedBelow = 5 // blank + commit line + preview + blank + help line under the band
 
 // logRows is how many rows the log column may fill. It is derived from the
 // terminal height and MUST leave room for everything drawn below the band —
@@ -446,11 +546,9 @@ type layout struct {
 
 func (m Model) layout() layout {
 	n := len(m.files)
-	band := n
+	band := max(n, 1) // a clean tree still gets its one-line notice
 	if m.logVisible() {
-		if lr := m.logRows(); lr > band {
-			band = lr
-		}
+		band = max(band, m.logRows())
 	}
 	commitRow := headerRows + band + 1 // one blank line between the band and the commit line
 	return layout{
@@ -458,7 +556,7 @@ func (m Model) layout() layout {
 		fileCount:  n,
 		bandHeight: band,
 		commitRow:  commitRow,
-		dropStart:  commitRow + 1,
+		dropStart:  commitRow + 2, // below the preview line
 	}
 }
 
@@ -483,7 +581,7 @@ func (m Model) hitTest(x, y int) hit {
 	l := m.layout()
 	if y >= l.filesStart && y < l.filesStart+l.fileCount {
 		if m.logVisible() && x >= m.leftColWidth() {
-			return hit{kind: hitNone} // clicked the read-only log column
+			return hit{kind: hitNone} // clicked the read-only right column
 		}
 		return hit{hitFile, y - l.filesStart}
 	}
@@ -507,18 +605,50 @@ func typeBoxWidth(name string) int {
 	return len([]rune(name)) + 8
 }
 
-var dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+// --- rendering --------------------------------------------------------------
+//
+// Colors follow docs/ux-mockups.html. Text is truncated while still plain and
+// styled afterwards, so widths are always measured on what the user sees.
+
+var (
+	green   = lipgloss.Color("#3fb950")
+	yellow  = lipgloss.Color("#d29922")
+	red     = lipgloss.Color("#f85149")
+	cyan    = lipgloss.Color("#39c5cf")
+	magenta = lipgloss.Color("#bc8cff")
+	gray    = lipgloss.Color("240")
+	faint   = lipgloss.Color("237")
+
+	dimStyle = lipgloss.NewStyle().Foreground(gray)
+	bold     = lipgloss.NewStyle().Bold(true)
+)
 
 func dim(s string) string { return dimStyle.Render(s) }
+func paint(c lipgloss.TerminalColor, s string) string {
+	return lipgloss.NewStyle().Foreground(c).Render(s)
+}
+
+// statusColor colors the porcelain status letter like the mockups.
+func statusColor(status rune) lipgloss.TerminalColor {
+	switch status {
+	case 'M':
+		return yellow
+	case 'A':
+		return green
+	case 'D':
+		return red
+	case 'R', 'C':
+		return magenta
+	default:
+		return cyan
+	}
+}
 
 // truncate hard-caps a plain string to w display columns with an ellipsis.
-// Used only on plain (un-styled) cells; the dim status strings are short.
+// A non-positive w means unbounded (the size is not known yet).
 func truncate(s string, w int) string {
-	if w <= 0 {
-		return ""
-	}
 	r := []rune(s)
-	if len(r) <= w {
+	if w <= 0 || len(r) <= w {
 		return s
 	}
 	if w == 1 {
@@ -527,24 +657,109 @@ func truncate(s string, w int) string {
 	return string(r[:w-1]) + "…"
 }
 
-func (m Model) fileLines() []string {
+// padRight fills a styled string with spaces up to w visible columns.
+func padRight(s string, w int) string {
+	return s + strings.Repeat(" ", max(w-lipgloss.Width(s), 0))
+}
+
+// sectionTitle is a panel header: a dim upper-case label and a fainter hint.
+func sectionTitle(label, hint string, w int) string {
+	hint = truncate(hint, w-len([]rune(label))-3)
+	return dimStyle.Bold(true).Render(label) + paint(faint, " · "+hint)
+}
+
+func (m Model) header() string {
+	marked := len(m.stagedFiles())
+	return fmt.Sprintf("  %s  %s %s", paint(green, bold.Render("nib")), dimStyle.Bold(true).Render("CAMBIOS"),
+		dim(fmt.Sprintf("%s de %s", count(marked, "marcado", "marcados"), count(len(m.files), "archivo", "archivos"))))
+}
+
+func count(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
+}
+
+// fileLines renders the working tree, w columns wide. Unmarked files that
+// usually change with the marked ones carry a yellow ↔.
+func (m Model) fileLines(w int) []string {
+	if len(m.files) == 0 {
+		return []string{dim("  ✓ árbol limpio, nada que commitear")}
+	}
+	related := map[string]bool{}
+	for _, r := range m.related {
+		related[r.Path] = true
+	}
 	lines := make([]string, 0, len(m.files))
 	for i, f := range m.files {
-		marker := " "
-		if m.focus == zoneFiles && i == m.cursor {
-			marker = "▸"
+		cursor := m.focus == zoneFiles && i == m.cursor
+		marker, mark := " ", paint(faint, "○")
+		if cursor {
+			marker = paint(green, "▸")
 		}
-		mark := "○"
 		if m.staged[f.Path] {
-			mark = "✓"
+			mark = paint(green, "✓")
 		}
-		lines = append(lines, fmt.Sprintf("%s %s %c %s", marker, mark, f.Status, f.Path))
+		hint := ""
+		if related[f.Path] && !m.staged[f.Path] {
+			hint = paint(yellow, " ↔")
+		}
+		path := truncate(f.Path, w-6-lipgloss.Width(hint))
+		if cursor {
+			path = bold.Render(path)
+		}
+		lines = append(lines, fmt.Sprintf("%s %s %s %s%s", marker, mark, paint(statusColor(f.Status), string(f.Status)), path, hint))
 	}
 	return lines
 }
 
+// relatedLines is the RELACIONADOS section, w columns wide, or nil while
+// nothing is marked. "+" flags a modified file that is not marked yet: the
+// likely omission.
+func (m Model) relatedLines(w int) []string {
+	if !m.showRelated || len(m.stagedFiles()) == 0 {
+		return nil
+	}
+	title := sectionTitle("RELACIONADOS", "suelen cambiar con lo marcado", w)
+	switch {
+	case m.historyErr != nil || m.relatedErr != nil:
+		return []string{title, dim("historial no disponible")}
+	case m.historyBusy:
+		return []string{title, dim("indexando historial…")}
+	case len(m.related) == 0:
+		return []string{title, dim("sin cambios compartidos en el historial")}
+	}
+	unmarked := map[string]bool{}
+	for _, f := range m.files {
+		unmarked[f.Path] = !m.staged[f.Path]
+	}
+	lines := []string{title}
+	for _, r := range m.related {
+		pct := fmt.Sprintf("%3.0f%%", r.Ratio*100)
+		path := truncate(r.Path, w-3-len(pct))
+		row := paint(faint, "·") + " " + dim(path)
+		if unmarked[r.Path] {
+			row = paint(yellow, "+") + " " + path
+		}
+		lines = append(lines, padRight(row, w-len(pct))+" "+dim(pct))
+	}
+	return lines
+}
+
+// logLine colors one `git log --oneline --decorate` line: graph, hash, refs.
+var logLine = regexp.MustCompile(`^([*|\\/_ ]*)([0-9a-f]{7,40})( \([^)]*\))?(.*)$`)
+
+func colorLog(line string) string {
+	g := logLine.FindStringSubmatch(line)
+	if g == nil {
+		return line
+	}
+	return paint(red, g[1]) + paint(yellow, g[2]) + paint(magenta, g[3]) + g[4]
+}
+
 // logBody returns the log lines or a single dimmed status line.
-func (m Model) logBody() []string {
+func (m Model) logBody(w int) []string {
 	switch {
 	case m.logLoading:
 		return []string{dim("cargando…")}
@@ -555,15 +770,23 @@ func (m Model) logBody() []string {
 	if trimmed == "" {
 		return []string{dim("(sin commits)")}
 	}
-	return strings.Split(trimmed, "\n")
-}
-
-func (m Model) logLines(band int) []string {
-	lines := append([]string{dim("GIT LOG · " + m.logScope)}, m.logBody()...)
-	if len(lines) > band {
-		lines = lines[:band]
+	var lines []string
+	for _, line := range strings.Split(trimmed, "\n") {
+		lines = append(lines, colorLog(truncate(line, w)))
 	}
 	return lines
+}
+
+// rightLines stacks RELACIONADOS over the git log, cropped to the band.
+func (m Model) rightLines(band, w int) []string {
+	scope := map[string]string{"current": "rama actual", "all": "todas las ramas"}[m.logScope]
+	var lines []string
+	if related := m.relatedLines(w); related != nil {
+		lines = append(related, "")
+	}
+	lines = append(lines, sectionTitle("GIT LOG", scope, w))
+	lines = append(lines, m.logBody(w)...)
+	return lines[:min(len(lines), band)]
 }
 
 // View implements tea.Model. See docs/ux-mockups.html for the target layout.
@@ -573,14 +796,13 @@ func (m Model) View() string {
 	}
 
 	var b strings.Builder
-	b.WriteString("  nib — cambios\n\n")
+	b.WriteString(m.header() + "\n\n")
 
 	l := m.layout()
-	left := m.fileLines()
 	if m.logVisible() {
-		right := m.logLines(l.bandHeight)
 		leftW := m.leftColWidth()
 		rightW := m.width - leftW - 3 // " │ "
+		left, right := m.fileLines(leftW), m.rightLines(l.bandHeight, rightW)
 		for i := 0; i < l.bandHeight; i++ {
 			lc, rc := "", ""
 			if i < len(left) {
@@ -589,69 +811,98 @@ func (m Model) View() string {
 			if i < len(right) {
 				rc = right[i]
 			}
-			fmt.Fprintf(&b, "%-*s │ %s\n", leftW, truncate(lc, leftW), truncate(rc, rightW))
+			fmt.Fprintf(&b, "%s %s %s\n", padRight(lc, leftW), paint(faint, "│"), rc)
 		}
 	} else {
-		for _, line := range left {
+		for _, line := range m.fileLines(m.width) {
 			b.WriteString(line + "\n")
 		}
 	}
 
-	b.WriteString("\n")
-	b.WriteString(m.commitLine())
-	b.WriteString("\n")
+	b.WriteString("\n" + m.commitLine() + "\n" + m.previewLine() + "\n")
 	if m.dropOpen {
 		b.WriteString(m.dropdownView())
 	}
-	help := m.helpLine()
-	if m.flash != "" {
-		help = m.flash + " · " + help
-	}
-	fmt.Fprintf(&b, "\n %s\n", help)
+	fmt.Fprintf(&b, "\n %s\n", m.footer())
 	return b.String()
 }
 
 func (m Model) commitLine() string {
 	t := commit.Types[m.typeIdx]
-	marker := " "
+	marker, frame := " ", faint
 	if m.focus == zoneType {
-		marker = "▸"
+		marker, frame = paint(green, "▸"), green
 	}
 	arrow := "▾"
 	if m.dropOpen {
 		arrow = "▴"
 	}
-	msg := m.message
-	if msg == "" {
-		msg = "(escribe el mensaje)"
+	msg := paint(faint, "escribe el mensaje…")
+	switch {
+	case m.focus == zoneMessage:
+		msg = m.message + paint(green, "▌")
+	case m.message != "":
+		msg = m.message
 	}
-	if m.focus == zoneMessage {
-		msg = m.message + "_"
+	box := paint(frame, "[ ") + paint(green, bold.Render(t.Name)) + " " + dim(arrow) + paint(frame, " ]")
+	return marker + box + " " + msg
+}
+
+// previewLine shows the exact subject enter will commit, or the next step.
+func (m Model) previewLine() string {
+	marked := len(m.stagedFiles())
+	switch {
+	case marked == 0:
+		return dim("  marca archivos con espacio o click")
+	case strings.TrimSpace(m.message) == "":
+		return dim("  " + count(marked, "archivo listo", "archivos listos") + " · escribe el mensaje")
 	}
-	return fmt.Sprintf("%s[ %s %s ] %s", marker, t.Name, arrow, msg)
+	subject := commit.Format(commit.Types[m.typeIdx].Prefix, m.message)
+	return dim("  → ") + subject + dim("  · "+count(marked, "archivo", "archivos"))
 }
 
 func (m Model) dropdownView() string {
 	var b strings.Builder
 	for i, t := range commit.Types {
-		sel := " "
+		name := fmt.Sprintf("%-9s", t.Name)
 		if i == m.dropIdx {
-			sel = "▸"
+			fmt.Fprintf(&b, "%s %s %s\n", paint(green, "▸"), paint(green, bold.Render(name)), t.Desc)
+			continue
 		}
-		fmt.Fprintf(&b, "%s %-9s %s\n", sel, t.Name, t.Desc)
+		fmt.Fprintf(&b, "  %s %s\n", name, dim(t.Desc))
 	}
 	return b.String()
 }
 
-func (m Model) helpLine() string {
+// footer is the transient flash, colored by outcome, followed by the keys of
+// the focused zone.
+func (m Model) footer() string {
+	var keys []string
+	for _, pair := range m.helpKeys() {
+		keys = append(keys, bold.Render(pair[0])+" "+dim(pair[1]))
+	}
+	help := strings.Join(keys, dim(" · "))
+	switch {
+	case m.flash == "":
+		return help
+	case strings.HasPrefix(m.flash, "✓"):
+		return paint(green, m.flash) + "   " + help
+	case strings.HasPrefix(m.flash, "✗"):
+		return paint(red, m.flash) + "   " + help
+	default:
+		return paint(yellow, m.flash) + "   " + help
+	}
+}
+
+func (m Model) helpKeys() [][2]string {
 	switch {
 	case m.focus == zoneType && m.dropOpen:
-		return "j/k mover · enter elige · esc cierra"
+		return [][2]string{{"j/k", "mover"}, {"enter", "elige"}, {"esc", "cierra"}}
 	case m.focus == zoneType:
-		return "letra elige tipo · ↓ abre lista · tab mensaje · esc atrás"
+		return [][2]string{{"letra", "elige tipo"}, {"↓", "abre lista"}, {"tab", "mensaje"}, {"esc", "atrás"}}
 	case m.focus == zoneMessage:
-		return "escribe · enter commit · esc atrás · tab archivos"
+		return [][2]string{{"enter", "commit"}, {"esc", "atrás"}, {"tab", "archivos"}}
 	default:
-		return "j/k mover · espacio stage · tab tipo · enter commit · q salir"
+		return [][2]string{{"j/k", "mover"}, {"espacio", "marca"}, {"tab", "tipo"}, {"enter", "commit"}, {"q", "salir"}}
 	}
 }

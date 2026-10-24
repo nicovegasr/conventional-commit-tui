@@ -7,6 +7,16 @@ later goal — ADR-0004.)
 
 ## [Unreleased]
 
+### Added
+
+- The TUI shows what usually changes with the marked files (`RELACIONADOS`,
+  above the git log). Modified files that are related but not marked get a
+  `+` in the panel and a `↔` in the file list. The history index is refreshed
+  in the background on start and after each commit (ADR-0014).
+- Colors and layout follow the UX mockups: status letters, marks, git-log
+  hashes and refs, a commit preview under the message line and a key-styled
+  footer.
+
 ### Fixed
 
 - A failed commit now shows git's reason (e.g. a rejecting pre-commit hook),
