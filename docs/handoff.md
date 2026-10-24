@@ -1,6 +1,39 @@
-# History analysis — handoff
+# nib — handoff
 
-Date: 2026-10-21.
+Date: 2026-10-24.
+
+## Next session: Phase 4 — `/settings` (design not closed)
+
+Start here. The commit TUI now has a related-files panel (ADR-0014), a 2 s
+background reload and the mockup's visual style, but **nothing can be switched
+off yet**, which breaks the rule "rich by default, everything heavy switches
+off". Phase 4 fixes that. Already decided (ROADMAP): a command palette inside
+the TUI and persisted TOML at `~/.config/nib/settings.toml`, toggles applied
+live. Target screen: the `/settings` mockup in `docs/ux-mockups.html`.
+
+Open questions to settle with the user **before** writing code (the session
+ended while they were being asked; write an ADR once closed):
+
+1. **Custom log scope** (`settings.LogCustomCmd`): implement or drop? It means
+   running a user-typed git command (validation, escaping). Proposal: drop it
+   and keep `current` / `all` only.
+2. **How the palette opens**: `/` in the Files zone opening a filterable
+   command palette (`/settings` now, `/audit` and `/stats` later; `/` stays
+   text in the message field) vs. a direct key. Proposal: the `/` palette.
+3. **Which options in this phase**: log panel on/off, related panel on/off,
+   mouse capture on/off (off restores native selection/scroll; needs
+   `tea.DisableMouse`/`EnableMouseCellMotion` at runtime), log scope, auto
+   reload on/off. The mockup also lists `/audit` rows; proposal: leave them for
+   Phase 5.
+
+Code anchors: `internal/settings/settings.go` (struct + `Default()`, Load/Save
+TODOs), model flags `showLog`, `showRelated`, `logScope` in
+`internal/ui/model.go`, `poll()` for auto reload, `main.go` enables the mouse.
+
+Local state: `main` is clean. `git stash list` holds "scratch CHANGELOG test
+edit" — the user's throwaway test edit, not work to keep.
+
+## Analysis track — where it stands
 
 ## Delivered
 
@@ -71,9 +104,14 @@ ADR-0012 fixed both protocol flaws found there: held-out commits are capped by
 from every non-merge commit of the DAG by author time instead of the
 first-parent chain. ADR-0013 re-ran the seven-repository replication under
 it: the defaults beat the previous ones on six of seven repositories and the
-grid did not justify a change. Next, capture incremental update and query
-latency distributions. Only after
-that should symbol identity, extraction and impact semantics be designed.
+grid did not justify a change. ADR-0014 brought coupling into the commit TUI.
+Next on this track, capture incremental update and query latency
+distributions. Only after that should symbol identity, extraction and impact
+semantics be designed.
+
+Benchmark clones used by `scripts/tune-coupling.py` were in a temporary
+scratchpad and will be gone; re-clone the seven repositories at the HEADs in
+`docs/research/file-coupling-benchmarks.md` to reproduce.
 
 ## Known boundaries
 

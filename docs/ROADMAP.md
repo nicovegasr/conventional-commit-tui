@@ -13,6 +13,8 @@ See ADR-0008 for semantics and limitations.
 
 Next milestones:
 
+0. ~~Coupling in the commit TUI~~ — related-files panel over the git log,
+   background index refresh and 2 s live reload (ADR-0014).
 1. ~~Reproducible held-out evaluation~~ — `nib evaluate` (ADR-0009). First
    preregistered run on three repositories: source conditioning beats global
    frequency, but Nib's default filters lost to unfiltered co-change. Tuning on
@@ -81,7 +83,9 @@ than the Source Control panel or lazygit/gitui (both tried, neither fit). It is
   columnas; la app es ahora una **sesión persistente** (un commit refresca el
   estado en vez de cerrar — ADR-0007). El scope `custom` queda diferido a Fase 4.
 - [ ] **Phase 4 — `/settings`.** Command palette + persisted TOML
-  (`~/.config/nib/settings.toml`), all toggles live.
+  (`~/.config/nib/settings.toml`), all toggles live. **Next.** Open design
+  questions (custom log scope, how the palette opens, which toggles) are listed
+  in `docs/handoff.md`.
 - [ ] **Phase 5 — `/audit`.** Render hotspots, `--days`/`--exclude`, threshold
   coloring from settings.
 - [ ] **Phase 6 — `/stats`.** Commit-type breakdown view; later timeline/authors.
