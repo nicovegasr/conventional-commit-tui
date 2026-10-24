@@ -295,3 +295,63 @@ from the whole DAG rather than the first-parent chain.
 
 Reproduce with `scripts/tune-coupling.py WORKDIR adr-0011 tune` and
 `scripts/tune-coupling.py WORKDIR adr-0011 validate s1/f100/recent90 s1/f50/recent90 s3/f50/shared`.
+
+## Re-running the replication under ADR-0012 — ADR-0013 — 2026-10-24
+
+Protocol fixed in ADR-0013 before any run: the seven repositories, HEADs,
+sources and `.nibignore` of ADR-0011; ADR-0012 sampling (non-merge commits of
+the whole DAG by author time) with `--case-max-files 50` for every
+configuration, so each window scores one set of cases. These numbers are not
+comparable with the earlier sections.
+
+### Step 1 — replication (validation windows, precision@5)
+
+| Repository | Cases | current default | previous default | unfiltered co-change | global frequency |
+|---|---:|---:|---:|---:|---:|
+| blog | 43 | **22.3%** | 15.3% | 23.3% | 11.6% |
+| fzf | 51 | **30.6%** | 23.1% | 23.9% | 18.0% |
+| astro | 48 | **7.9%** | 7.5% | 7.9% | 1.7% |
+| flask | 29 | **18.6%** | 17.2% | 19.3% | 2.8% |
+| ripgrep | 24 | **13.3%** | 11.7% | 13.3% | 4.2% |
+| okhttp | 31 | **20.0%** | 5.8% | 21.9% | 1.9% |
+| django | 52 | 13.1% | **13.5%** | 11.5% | 2.3% |
+| mean | | **18.0%** | 13.5% | 17.3% | 6.1% |
+
+The current defaults beat the previous ones on six of seven repositories (five
+required), so they **replicate**. Flask now has 29 cases instead of 2. Against
+unfiltered co-change the validation margin is small: wins on fzf and Django,
+ties on Astro and ripgrep, losses on the blog, Flask and OkHttp.
+
+### Step 2 — grid (45 configurations × 7 repositories, tuning windows)
+
+Tuning cases: blog 35, fzf 170, Astro 175, Flask 49, ripgrep 132, OkHttp 182,
+Django 225. Mean precision@5 at ≤ 50 paths:
+
+| Rank | support 1 | support 2 | support 3 |
+|---|---:|---:|---:|
+| shared | 19.5% | 17.2% | 15.0% |
+| recent 14 d | 20.4% | 17.6% | 15.1% |
+| recent 30 d | 20.8% | 18.0% | 15.5% |
+| recent 90 d | **21.1%** | 18.3% | 15.7% |
+| recent 365 d | 20.8% | 18.1% | 15.5% |
+
+With support 1 and recent 90 d, the cap scored 20.3% (≤ 20), 21.1% (≤ 50) and
+21.2% (≤ 100). The rule selected ≤ 100. On validation it scored an 18.1% mean
+against 18.0%, won on Astro and OkHttp, tied on four and lost on Django. It
+needed four wins, so **the defaults stay**.
+
+### Findings
+
+- With a fixed population the cap barely matters between 50 and 100 paths;
+  ≤ 20 costs about a point.
+- Support 1 and a 90-day half-life remain best. Recency beats `shared` on all
+  seven tuning windows.
+- On the larger tuning windows the defaults beat unfiltered co-change on all
+  seven repositories (21.1% vs 18.5% mean); on the small validation windows
+  the margin shrinks to 0.7 points. Source conditioning beats global frequency
+  everywhere.
+- Validation windows hold 24–52 cases, so single-repository differences of a
+  point or two are within noise.
+
+Reproduce with `scripts/tune-coupling.py WORKDIR adr-0013 tune` and
+`scripts/tune-coupling.py WORKDIR adr-0013 validate s1/f100/recent90 s1/f50/recent90 s3/f50/shared`.

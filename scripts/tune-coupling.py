@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Coupling tuning protocols (ADR-0010, ADR-0011): run `nib evaluate` per config.
+"""Coupling tuning protocols (ADR-0010, ADR-0011, ADR-0013): run `nib evaluate` per config.
 
 Usage: scripts/tune-coupling.py WORKDIR GRID tune|validate [CONFIG ...]
 
-GRID is adr-0010 or adr-0011; it fixes the repositories and the configuration
+GRID is adr-0010, adr-0011 or adr-0013 (the adr-0011 grid under ADR-0012); it fixes the repositories and the configuration
 grid. WORKDIR holds a `nib` binary and full clones named after the
 repositories, each indexed and with the shared .nibignore
 (docs/research/file-coupling-benchmarks.md). CONFIG restricts the run, e.g.
@@ -37,6 +37,7 @@ GRIDS = {
     "adr-0010": (["blog", "fzf", "astro"], ["shared", "jaccard", "recent90", "recent365"]),
     "adr-0011": (list(SOURCES), ["shared", "recent14", "recent30", "recent90", "recent365"]),
 }
+GRIDS["adr-0013"] = GRIDS["adr-0011"]
 
 
 def config_args(name):
@@ -48,7 +49,7 @@ def config_args(name):
 
 def evaluate(workdir, repo, split, config):
     windows = SMALL_WINDOWS if repo == "blog" else WINDOWS
-    command = [f"{workdir}/nib", "evaluate", "--json", *config_args(config), *SOURCES[repo], *windows[split]]
+    command = [f"{workdir}/nib", "evaluate", "--json", *config_args(config), "--case-max-files", "50", *SOURCES[repo], *windows[split]]
     report = json.loads(subprocess.run(command, cwd=f"{workdir}/{repo}", capture_output=True, text=True, check=True).stdout)
     at5 = {p["name"]: next(m for m in p["metrics"] if m["k"] == 5) for p in report["predictors"]}
     return {"cases": len(report["cases"]), "nib": at5["nib"]["precision"], "nib_recall": at5["nib"]["mean_recall"],
