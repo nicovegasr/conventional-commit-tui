@@ -86,10 +86,12 @@ than the Source Control panel or lazygit/gitui (both tried, neither fit). It is
   (`~/.config/nib/settings.toml`), all toggles live: log panel, related panel,
   mouse capture, log scope, auto-reload interval. No custom log command;
   `/audit` rows wait for Phase 5 (ADR-0015).
-- [ ] **Phase 5 — `/audit`.** Render hotspots, `--days`/`--exclude`, threshold
-  coloring from settings. **Next.** Joins the `/` palette and adds its rows to
-  `/settings`.
+- [x] **Phase 5 — `/audit`.** Hotspot screen from the `/` palette: commits,
+  ±lines as context, `refactor?`/`vigilar` against the `/settings` threshold,
+  window cycled in-screen (7 · 30 · 90 · 365). No flags; `.auditignore`
+  replaces `--exclude` (ADR-0016).
 - [ ] **Phase 6 — `/stats`.** Commit-type breakdown view; later timeline/authors.
+  **Next.**
 - [ ] **Phase 7 — release.** `gh repo create nib-git`, push, tag `v0.1.0`,
   build/install instructions, maybe `brew`/`go install`.
 

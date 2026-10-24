@@ -18,8 +18,12 @@ const (
 	ScopeAll     = "all"
 )
 
-// ReloadChoices are the auto-reload intervals in seconds; 0 turns it off.
-var ReloadChoices = []int{0, 1, 2, 5, 10}
+// The values each cycling option steps through (Next).
+var (
+	ReloadChoices    = []int{0, 1, 2, 5, 10} // auto-reload seconds; 0 turns it off
+	AuditDayChoices  = []int{7, 30, 90, 365}
+	ThresholdChoices = []int{5, 10, 20, 30, 50}
+)
 
 // Settings is the persisted configuration.
 type Settings struct {
@@ -76,6 +80,12 @@ func Load(path string) (Settings, error) {
 	if !slices.Contains(ReloadChoices, s.ReloadSeconds) {
 		s.ReloadSeconds = d.ReloadSeconds
 	}
+	if !slices.Contains(AuditDayChoices, s.AuditDays) {
+		s.AuditDays = d.AuditDays
+	}
+	if !slices.Contains(ThresholdChoices, s.AuditThreshold) {
+		s.AuditThreshold = d.AuditThreshold
+	}
 	return s, nil
 }
 
@@ -95,8 +105,8 @@ func Save(path string, s Settings) error {
 	return f.Close()
 }
 
-// NextReload is the interval after seconds in ReloadChoices, wrapping to off.
-func NextReload(seconds int) int {
-	i := slices.Index(ReloadChoices, seconds)
-	return ReloadChoices[(i+1)%len(ReloadChoices)]
+// Next is the choice after v, wrapping around; an unknown v gives the first.
+func Next(choices []int, v int) int {
+	i := slices.Index(choices, v)
+	return choices[(i+1)%len(choices)]
 }

@@ -88,7 +88,7 @@ func sampleModelWithLogger() (Model, *fakeRepo, *fakeLogger) {
 		{Path: "c.go", Status: 'A', Staged: true},
 	}}
 	lg := &fakeLogger{out: "abc123 feat: x\n"}
-	return New(repo, lg, &fakeHistory{}, &fakeStore{}), repo, lg
+	return New(repo, lg, &fakeHistory{}, &fakeStore{}, &fakeAuditor{}), repo, lg
 }
 
 func sampleModel() (Model, *fakeRepo) {
@@ -111,7 +111,7 @@ func TestNewLoadsFilesAndPreMarksStaged(t *testing.T) {
 }
 
 func TestNewPropagatesStatusError(t *testing.T) {
-	m := New(&fakeRepo{statusErr: errors.New("boom")}, &fakeLogger{}, &fakeHistory{}, &fakeStore{})
+	m := New(&fakeRepo{statusErr: errors.New("boom")}, &fakeLogger{}, &fakeHistory{}, &fakeStore{}, &fakeAuditor{})
 	if m.err == nil {
 		t.Error("expected err set when Status fails")
 	}
@@ -735,7 +735,7 @@ func historyModel(h *fakeHistory) Model {
 		{Path: "a.go", Status: 'M'},
 		{Path: "b.go", Status: 'M'},
 	}}
-	return New(repo, &fakeLogger{}, h, &fakeStore{})
+	return New(repo, &fakeLogger{}, h, &fakeStore{}, &fakeAuditor{})
 }
 
 // run executes cmd and feeds its message back, as the Bubble Tea loop would.

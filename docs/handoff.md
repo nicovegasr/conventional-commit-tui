@@ -2,17 +2,18 @@
 
 Date: 2026-10-24.
 
-## Next session: Phase 5 — `/audit`
+## Next session: Phase 6 — `/stats`
 
-Phase 4 is done (ADR-0015): `/` on an empty message (or the `/ comandos`
-footer button) opens the command palette; `/settings` toggles the log panel,
-related panel, mouse capture, log scope and auto-reload interval, live and
-saved to `~/.config/nib/settings.toml`. `/audit` joins `commands` in
-`internal/ui/settings.go` and adds its rows (`AuditDays`, `AuditThreshold`,
-already in `settings.Settings`) to `settingRows`.
+Phases 4 and 5 are done. `/` on an empty message (or the `/ comandos` button)
+opens the palette with `/audit` (ADR-0016) and `/settings` (ADR-0015).
+`/audit` is a full screen fed by the `ui.Auditor` port; `d` or a click on the
+title cycles the window. `/stats` follows the same shape: a command in
+`commands` (`internal/ui/settings.go`), a port, and a screen file like
+`internal/ui/audit.go` over `internal/stats`.
 
-Not verified by hand yet: the real TUI was not driven in this session (no
-tmux); only `make ci` and the model tests ran.
+Not verified by hand yet: the real TUI was not driven in a terminal (no
+tmux); `make ci`, the model tests and a render of `/audit` over this
+repository's real history ran.
 
 ## Analysis track — where it stands
 

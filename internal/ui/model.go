@@ -25,6 +25,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/nicovegasr/nib-git/internal/audit"
 	"github.com/nicovegasr/nib-git/internal/commit"
 	"github.com/nicovegasr/nib-git/internal/git"
 	"github.com/nicovegasr/nib-git/internal/settings"
@@ -135,6 +136,15 @@ type Model struct {
 	settingsOpen bool // /settings screen replaces the commit view
 	settingsIdx  int  // highlighted settings row
 
+	auditor      Auditor
+	auditOpen    bool // /audit screen replaces the commit view
+	auditDays    int  // window shown; starts at the /settings default
+	auditGen     int  // numbers audits; answers for an older window are dropped
+	auditLoading bool
+	auditReport  audit.Report
+	auditErr     error
+	auditTop     int // first hotspot row shown (scroll)
+
 	logger     Logger
 	logContent string
 	logErr     error
@@ -153,12 +163,13 @@ type Model struct {
 
 // New builds the initial model, loading the settings through store and the
 // working tree through repo. Unreadable settings fall back to the defaults.
-func New(repo Repo, logger Logger, history History, store Store) Model {
+func New(repo Repo, logger Logger, history History, store Store, auditor Auditor) Model {
 	prefs, prefsErr := store.Load()
 	m := Model{
 		repo:        repo,
 		logger:      logger,
 		store:       store,
+		auditor:     auditor,
 		prefs:       prefs,
 		logLoading:  prefs.ShowLog, // Init fetches it
 		history:     history,
@@ -351,6 +362,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.queryRelated()
 	case relatedLoadedMsg:
 		return m.relatedLoaded(msg)
+	case auditLoadedMsg:
+		return m.auditLoaded(msg), nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -369,6 +382,8 @@ func (m Model) updateKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	switch {
+	case m.auditOpen:
+		return m.updateAudit(key)
 	case m.settingsOpen:
 		return m.updateSettings(key)
 	case m.palette:
@@ -536,7 +551,10 @@ func typedText(key tea.KeyMsg) string {
 // scrolls the open dropdown. With mouse capture off in /settings no mouse
 // message arrives at all.
 func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.settingsOpen {
+	switch {
+	case m.auditOpen:
+		return m.clickAudit(msg)
+	case m.settingsOpen:
 		return m.clickSettings(msg)
 	}
 	if m.dropOpen && (msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown) {
@@ -941,7 +959,10 @@ func (m Model) View() string {
 	if m.err != nil {
 		return "nib: " + m.err.Error() + "\n"
 	}
-	if m.settingsOpen {
+	switch {
+	case m.auditOpen:
+		return m.auditView()
+	case m.settingsOpen:
 		return m.settingsView()
 	}
 
@@ -1037,7 +1058,10 @@ func (m Model) footer() string {
 	for _, pair := range m.helpKeys() {
 		keys = append(keys, bold.Render(pair[0])+" "+dim(pair[1]))
 	}
-	line := paint(cyan, commandsButton) + "  "
+	line := ""
+	if !m.auditOpen && !m.settingsOpen { // the palette opens from the commit view only
+		line = paint(cyan, commandsButton) + "  "
+	}
 	switch {
 	case m.flash == "":
 	case strings.HasPrefix(m.flash, "✓"):
@@ -1052,6 +1076,8 @@ func (m Model) footer() string {
 
 func (m Model) helpKeys() [][2]string {
 	switch {
+	case m.auditOpen:
+		return [][2]string{{"d", "ventana"}, {"j/k", "mover"}, {"esc", "vuelve"}}
 	case m.settingsOpen:
 		return [][2]string{{"j/k", "mover"}, {"espacio", "cambia"}, {"esc", "vuelve"}}
 	case m.palette:
