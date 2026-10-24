@@ -104,5 +104,4 @@ scratchpad and will be gone; re-clone the seven repositories at the HEADs in
   88 MiB allocated high-water size after subsequent rebuilds.
 - The query decodes every participating commit record. Frequent paths cost more.
 - Shallow repositories, non-UTF-8 paths and tokens above 16 MiB fail explicitly.
-- Go 1.22 compatibility is declared, but this session executed Go 1.26.4.
-  Reassess the Go/bbolt baseline before a release.
+- Go baseline is 1.26 (`go.mod`; CI reads it). Reassess bbolt before a release.

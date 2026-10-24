@@ -25,7 +25,7 @@ Everything is local: nib only reads your repository through `git` and keeps its 
 
 ## Install
 
-Requires Go 1.22+ and git.
+Requires Go 1.26+ and git.
 
 ```bash
 git clone https://github.com/nicovegasr/nib-git
