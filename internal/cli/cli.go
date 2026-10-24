@@ -160,13 +160,17 @@ func update(ctx context.Context, repo history.Repository, rebuild bool) (index.R
 }
 
 // Refresh brings the index of the repository at dir up to HEAD, for callers
-// outside the CLI such as the TUI (ADR-0014).
+// outside the CLI such as the TUI (ADR-0014). The index is derived, so a
+// rewritten history (checkout, amend, rebase) rebuilds it.
 func Refresh(ctx context.Context, dir string) error {
 	repo, err := history.Open(ctx, dir)
 	if err != nil {
 		return err
 	}
 	_, err = update(ctx, repo, false)
+	if errors.Is(err, index.ErrRewrite) {
+		_, err = update(ctx, repo, true)
+	}
 	return err
 }
 

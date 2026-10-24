@@ -843,3 +843,81 @@ func TestRelatedLinesFlagUnmarkedWorkingTreeFiles(t *testing.T) {
 		t.Errorf("nothing marked must hide the panel: %q", lines)
 	}
 }
+
+func TestPollRefreshKeepsMarksAndAdoptsExternalStaging(t *testing.T) {
+	m, _ := sampleModel() // a.go, b.go unmarked; c.go staged in git
+	m.cursor = 1
+	m, _ = send(m, "space")  // mark b.go
+	m.staged["c.go"] = false // the user unmarked a git-staged file
+	next, _ := m.Update(statusLoadedMsg{files: []git.FileChange{
+		{Path: "new.go", Status: '?'},
+		{Path: "a.go", Status: 'M', Staged: true}, // git add from another terminal
+		{Path: "b.go", Status: 'M'},
+		{Path: "c.go", Status: 'A', Staged: true},
+	}})
+	m = next.(Model)
+	want := map[string]bool{"new.go": false, "a.go": true, "b.go": true, "c.go": false}
+	if !reflect.DeepEqual(m.staged, want) {
+		t.Errorf("marks %v, want %v", m.staged, want)
+	}
+	if m.files[m.cursor].Path != "b.go" {
+		t.Errorf("cursor on %s, want it to follow b.go", m.files[m.cursor].Path)
+	}
+}
+
+func TestPollRequeriesOnlyWhenTheMarkedSetChanges(t *testing.T) {
+	m := historyModel(&fakeHistory{})
+	m.historyBusy = false
+	m, _ = send(m, "space") // a.go
+	same := []git.FileChange{{Path: "a.go", Status: 'M'}, {Path: "b.go", Status: 'M'}, {Path: "x.go", Status: '?'}}
+	if _, cmd := m.Update(statusLoadedMsg{files: same}); cmd != nil {
+		t.Error("an unrelated working-tree change must not query history")
+	}
+	gone := []git.FileChange{{Path: "b.go", Status: 'M'}}
+	next, _ := m.Update(statusLoadedMsg{files: gone})
+	if next.(Model).relatedGen == m.relatedGen {
+		t.Error("a marked file leaving the tree changes the question")
+	}
+	if _, cmd := m.Update(statusLoadedMsg{err: errors.New("boom")}); cmd != nil {
+		t.Error("a failed poll keeps the current list")
+	}
+}
+
+func TestPollTickReloadsStatusAndLogAndSchedulesTheNext(t *testing.T) {
+	m, _ := sampleModel()
+	m.logLoading = false
+	next, cmd := m.Update(pollMsg{})
+	if cmd == nil || next.(Model).logLoading {
+		t.Fatal("a poll reloads in the background, without the loading placeholder")
+	}
+	if _, ok := batched[statusLoadedMsg](cmd); !ok {
+		t.Error("a poll must reload the working tree")
+	}
+}
+
+func TestExternalCommitRefreshesHistory(t *testing.T) {
+	m := historyModel(&fakeHistory{})
+	m.historyBusy = false
+	m.logLoading = false
+	m.logContent = "aaa first\n"
+	next, cmd := m.Update(logLoadedMsg{content: "aaa first\n"})
+	if cmd != nil || next.(Model).historyBusy {
+		t.Error("an unchanged log is not a new commit")
+	}
+	next, cmd = m.Update(logLoadedMsg{content: "bbb second\naaa first\n"})
+	if cmd == nil || !next.(Model).historyBusy {
+		t.Error("a new commit made outside nib must refresh the index")
+	}
+}
+
+func TestRelatedRowsFitTheColumn(t *testing.T) {
+	m := historyModel(&fakeHistory{})
+	m.historyBusy = false
+	m.staged["a.go"] = true
+	m.related = []Related{{Path: "CHANGELOG.md", Ratio: 0.75}}
+	for _, line := range m.relatedLines(40) {
+		if w := len([]rune(line)); w > 40 {
+			t.Errorf("%q is %d columns wide, want <= 40", line, w)
+		}
+	}
+}

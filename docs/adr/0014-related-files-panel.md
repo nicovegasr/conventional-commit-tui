@@ -26,8 +26,11 @@ with the marked ones and is not marked may be forgotten.
   over the marked sources. That score counts weighted co-changes, so it is in
   the same unit for every source and keeps the ranking ADR-0010 validated.
   Marked files without history (new files) are skipped.
-- **Freshness:** the TUI brings the index up to HEAD in the background on
-  start and after every commit (incremental, ADR-0008). The first index of a
+- **Freshness:** every 2 s the TUI reloads the working tree and the log in the
+  background; marks survive a reload unless git's staged state for that file
+  changed. The index catches up with HEAD on start, after every commit and
+  whenever the log changes outside nib (incremental, ADR-0008); a rewritten
+  history (checkout, amend, rebase) rebuilds it. The first index of a
   large repository takes seconds; meanwhile the panel says so. Queries run off
   the UI goroutine; a result for a superseded marked set is dropped.
 - **Failure never blocks committing:** an index or query error collapses the

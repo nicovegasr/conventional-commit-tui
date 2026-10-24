@@ -282,4 +282,11 @@ func TestRealGitRelatedAfterRefresh(t *testing.T) {
 	if _, err := Related(context.Background(), dir, []string{"model.go"}, 5); !errors.Is(err, index.ErrStale) {
 		t.Errorf("a commit after the refresh must report a stale index: %v", err)
 	}
+	if err := Refresh(context.Background(), dir); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "commit", "-q", "--amend", "-m", "amended")
+	if err := Refresh(context.Background(), dir); err != nil {
+		t.Errorf("an amended HEAD must rebuild the derived index: %v", err)
+	}
 }

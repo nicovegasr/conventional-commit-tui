@@ -15,7 +15,9 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -72,6 +74,15 @@ type commitDoneMsg struct{ err error }
 type logLoadedMsg struct {
 	content string
 	err     error
+}
+
+// pollMsg asks for a background reload of the working tree and the log.
+type pollMsg struct{}
+
+// statusLoadedMsg carries a background working-tree reload.
+type statusLoadedMsg struct {
+	files []git.FileChange
+	err   error
 }
 
 // historyRefreshedMsg reports that the index caught up with HEAD, or why not.
@@ -141,19 +152,31 @@ func New(repo Repo, logger Logger, history History) Model {
 	return m.withFiles(files)
 }
 
-// withFiles replaces the file list, marking what git already has staged and
-// keeping the cursor inside the new list.
+// withFiles replaces the file list. Marks survive a reload: git's staged
+// state only decides a mark for a new file or when it changed (an external
+// `git add`, a failed commit), so polling never undoes the user's own marks.
+// The cursor follows its file when it is still there.
 func (m Model) withFiles(files []git.FileChange) Model {
-	m.files = files
-	m.staged = map[string]bool{}
-	for _, f := range files {
-		if f.Staged {
-			m.staged[f.Path] = true
+	previous := map[string]git.FileChange{}
+	for _, f := range m.files {
+		previous[f.Path] = f
+	}
+	var cursorPath string
+	if m.cursor < len(m.files) {
+		cursorPath = m.files[m.cursor].Path
+	}
+	staged := map[string]bool{}
+	m.cursor = 0
+	for i, f := range files {
+		staged[f.Path] = f.Staged
+		if p, known := previous[f.Path]; known && p.Staged == f.Staged {
+			staged[f.Path] = m.staged[f.Path]
+		}
+		if f.Path == cursorPath {
+			m.cursor = i
 		}
 	}
-	if m.cursor >= len(files) {
-		m.cursor = 0
-	}
+	m.files, m.staged = files, staged
 	return m
 }
 
@@ -175,6 +198,48 @@ func (m Model) loadLog() tea.Cmd {
 		out, err := logger.Log(scope, logFetchLimit)
 		return logLoadedMsg{content: out, err: err}
 	}
+}
+
+const pollInterval = 2 * time.Second
+
+// poll schedules the next background reload, so edits, `git add` and commits
+// made outside nib show up without restarting it.
+func poll() tea.Cmd {
+	return tea.Tick(pollInterval, func(time.Time) tea.Msg { return pollMsg{} })
+}
+
+func (m Model) loadStatus() tea.Cmd {
+	repo := m.repo
+	return func() tea.Msg {
+		files, err := repo.Status()
+		return statusLoadedMsg{files: files, err: err}
+	}
+}
+
+// statusLoaded applies a background reload. A failed one keeps the list; the
+// related files are asked again only when the marked set changed.
+func (m Model) statusLoaded(msg statusLoadedMsg) (Model, tea.Cmd) {
+	if msg.err != nil {
+		return m, nil
+	}
+	before := m.stagedFiles()
+	m = m.withFiles(msg.files)
+	if slices.Equal(before, m.stagedFiles()) {
+		return m, nil
+	}
+	return m.queryRelated()
+}
+
+// logLoaded stores the log. A log that changed while nib was not committing
+// means a commit, checkout or rebase happened outside: the index catches up.
+func (m Model) logLoaded(msg logLoadedMsg) (Model, tea.Cmd) {
+	moved := msg.err == nil && m.logContent != "" && msg.content != m.logContent
+	m.logLoading, m.logContent, m.logErr = false, msg.content, msg.err
+	if !moved || m.historyBusy {
+		return m, nil
+	}
+	m.historyBusy, m.staleRetried = true, false
+	return m, m.refreshHistory()
 }
 
 const relatedLimit = 5
@@ -224,7 +289,7 @@ func (m Model) relatedLoaded(msg relatedLoadedMsg) (Model, tea.Cmd) {
 }
 
 // Init implements tea.Model.
-func (m Model) Init() tea.Cmd { return tea.Batch(m.loadLog(), m.refreshHistory()) }
+func (m Model) Init() tea.Cmd { return tea.Batch(m.loadLog(), m.refreshHistory(), poll()) }
 
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -232,10 +297,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case commitDoneMsg:
 		return m.afterCommit(msg.err)
 	case logLoadedMsg:
-		m.logLoading = false
-		m.logContent = msg.content
-		m.logErr = msg.err
-		return m, nil
+		return m.logLoaded(msg)
+	case pollMsg:
+		return m, tea.Batch(m.loadStatus(), m.loadLog(), poll())
+	case statusLoadedMsg:
+		return m.statusLoaded(msg)
 	case historyRefreshedMsg:
 		m.historyBusy, m.historyErr = false, msg.err
 		return m.queryRelated()
@@ -742,7 +808,7 @@ func (m Model) relatedLines(w int) []string {
 		if unmarked[r.Path] {
 			row = paint(yellow, "+") + " " + path
 		}
-		lines = append(lines, padRight(row, w-len(pct))+" "+dim(pct))
+		lines = append(lines, padRight(row, w-len(pct)-1)+" "+dim(pct))
 	}
 	return lines
 }
