@@ -18,6 +18,7 @@ import (
 	"github.com/nicovegasr/nib-git/internal/cli"
 	"github.com/nicovegasr/nib-git/internal/git"
 	"github.com/nicovegasr/nib-git/internal/index"
+	"github.com/nicovegasr/nib-git/internal/settings"
 	"github.com/nicovegasr/nib-git/internal/ui"
 )
 
@@ -50,6 +51,25 @@ func (h indexHistory) Related(files []string, limit int) ([]ui.Related, error) {
 	return related, err
 }
 
+// fileStore adapts the settings file to the ui.Store port.
+type fileStore struct{}
+
+func (fileStore) Load() (settings.Settings, error) {
+	path, err := settings.Path()
+	if err != nil {
+		return settings.Default(), err
+	}
+	return settings.Load(path)
+}
+
+func (fileStore) Save(s settings.Settings) error {
+	path, err := settings.Path()
+	if err != nil {
+		return err
+	}
+	return settings.Save(path, s)
+}
+
 func main() {
 	if len(os.Args) > 1 {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -60,8 +80,8 @@ func main() {
 		}
 		return
 	}
-	model := ui.New(gitRepo{}, gitLogger{}, indexHistory{ctx: context.Background()})
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	model := ui.New(gitRepo{}, gitLogger{}, indexHistory{ctx: context.Background()}, fileStore{})
+	p := tea.NewProgram(model, tea.WithAltScreen()) // the model enables the mouse from its settings
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "nib:", err)
 		os.Exit(1)

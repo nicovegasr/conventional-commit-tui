@@ -2,36 +2,17 @@
 
 Date: 2026-10-24.
 
-## Next session: Phase 4 — `/settings` (design not closed)
+## Next session: Phase 5 — `/audit`
 
-Start here. The commit TUI now has a related-files panel (ADR-0014), a 2 s
-background reload and the mockup's visual style, but **nothing can be switched
-off yet**, which breaks the rule "rich by default, everything heavy switches
-off". Phase 4 fixes that. Already decided (ROADMAP): a command palette inside
-the TUI and persisted TOML at `~/.config/nib/settings.toml`, toggles applied
-live. Target screen: the `/settings` mockup in `docs/ux-mockups.html`.
+Phase 4 is done (ADR-0015): `/` on an empty message (or the `/ comandos`
+footer button) opens the command palette; `/settings` toggles the log panel,
+related panel, mouse capture, log scope and auto-reload interval, live and
+saved to `~/.config/nib/settings.toml`. `/audit` joins `commands` in
+`internal/ui/settings.go` and adds its rows (`AuditDays`, `AuditThreshold`,
+already in `settings.Settings`) to `settingRows`.
 
-Open questions to settle with the user **before** writing code (the session
-ended while they were being asked; write an ADR once closed):
-
-1. **Custom log scope** (`settings.LogCustomCmd`): implement or drop? It means
-   running a user-typed git command (validation, escaping). Proposal: drop it
-   and keep `current` / `all` only.
-2. **How the palette opens**: `/` in the Files zone opening a filterable
-   command palette (`/settings` now, `/audit` and `/stats` later; `/` stays
-   text in the message field) vs. a direct key. Proposal: the `/` palette.
-3. **Which options in this phase**: log panel on/off, related panel on/off,
-   mouse capture on/off (off restores native selection/scroll; needs
-   `tea.DisableMouse`/`EnableMouseCellMotion` at runtime), log scope, auto
-   reload on/off. The mockup also lists `/audit` rows; proposal: leave them for
-   Phase 5.
-
-Code anchors: `internal/settings/settings.go` (struct + `Default()`, Load/Save
-TODOs), model flags `showLog`, `showRelated`, `logScope` in
-`internal/ui/model.go`, `poll()` for auto reload, `main.go` enables the mouse.
-
-Local state: `main` is clean. `git stash list` holds "scratch CHANGELOG test
-edit" — the user's throwaway test edit, not work to keep.
+Not verified by hand yet: the real TUI was not driven in this session (no
+tmux); only `make ci` and the model tests ran.
 
 ## Analysis track — where it stands
 

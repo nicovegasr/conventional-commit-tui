@@ -88,7 +88,7 @@ func sampleModelWithLogger() (Model, *fakeRepo, *fakeLogger) {
 		{Path: "c.go", Status: 'A', Staged: true},
 	}}
 	lg := &fakeLogger{out: "abc123 feat: x\n"}
-	return New(repo, lg, &fakeHistory{}), repo, lg
+	return New(repo, lg, &fakeHistory{}, &fakeStore{}), repo, lg
 }
 
 func sampleModel() (Model, *fakeRepo) {
@@ -111,7 +111,7 @@ func TestNewLoadsFilesAndPreMarksStaged(t *testing.T) {
 }
 
 func TestNewPropagatesStatusError(t *testing.T) {
-	m := New(&fakeRepo{statusErr: errors.New("boom")}, &fakeLogger{}, &fakeHistory{})
+	m := New(&fakeRepo{statusErr: errors.New("boom")}, &fakeLogger{}, &fakeHistory{}, &fakeStore{})
 	if m.err == nil {
 		t.Error("expected err set when Status fails")
 	}
@@ -402,12 +402,28 @@ func TestCommitSuccessReloadsLog(t *testing.T) {
 	}
 }
 
-// batched runs every command of a tea.Batch and returns the first message of
-// type T. A quit anywhere in the batch fails the lookup.
+// messages runs cmd, or every command of its tea.Batch, and returns what they
+// produced.
+func messages(cmd tea.Cmd) []tea.Msg {
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return []tea.Msg{msg}
+	}
+	var msgs []tea.Msg
+	for _, c := range batch {
+		if c != nil {
+			msgs = append(msgs, c())
+		}
+	}
+	return msgs
+}
+
+// batched returns the first message of type T that cmd produces. A quit
+// anywhere in the batch fails the lookup.
 func batched[T tea.Msg](cmd tea.Cmd) (T, bool) {
 	var zero T
-	for _, c := range cmd().(tea.BatchMsg) {
-		msg := c()
+	for _, msg := range messages(cmd) {
 		if _, quit := msg.(tea.QuitMsg); quit {
 			return zero, false
 		}
@@ -480,7 +496,7 @@ func TestWindowSizeStored(t *testing.T) {
 }
 
 func TestLogHiddenOnNarrowTerminal(t *testing.T) {
-	m, _ := sampleModel() // showLog default true
+	m, _ := sampleModel() // ShowLog default true
 	m.width = 70
 	if m.logVisible() {
 		t.Error("log must hide under 80 cols")
@@ -573,7 +589,7 @@ func TestHitTestDropItemsOnlyWhenOpen(t *testing.T) {
 
 func TestHitTestLogColumnIgnored(t *testing.T) {
 	m, _ := sampleModel()
-	m.width = 120 // logVisible: showLog true and >= 80
+	m.width = 120 // logVisible: ShowLog true and >= 80
 	l := m.layout()
 	if got := m.hitTest(0, l.filesStart); got.kind != hitFile {
 		t.Errorf("left column file row -> %+v, want hitFile", got)
@@ -719,7 +735,7 @@ func historyModel(h *fakeHistory) Model {
 		{Path: "a.go", Status: 'M'},
 		{Path: "b.go", Status: 'M'},
 	}}
-	return New(repo, &fakeLogger{}, h)
+	return New(repo, &fakeLogger{}, h, &fakeStore{})
 }
 
 // run executes cmd and feeds its message back, as the Bubble Tea loop would.
@@ -886,7 +902,7 @@ func TestPollRequeriesOnlyWhenTheMarkedSetChanges(t *testing.T) {
 func TestPollTickReloadsStatusAndLogAndSchedulesTheNext(t *testing.T) {
 	m, _ := sampleModel()
 	m.logLoading = false
-	next, cmd := m.Update(pollMsg{})
+	next, cmd := m.Update(pollMsg{gen: m.pollGen})
 	if cmd == nil || next.(Model).logLoading {
 		t.Fatal("a poll reloads in the background, without the loading placeholder")
 	}
