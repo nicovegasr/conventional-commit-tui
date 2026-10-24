@@ -17,6 +17,10 @@ help: ## Show this help.
 build: ## Build the nib binary.
 	$(GO) build -o $(BINARY) .
 
+.PHONY: install
+install: ## Install nib into $(go env GOPATH)/bin, to run it from any repository.
+	$(GO) build -o "$$($(GO) env GOPATH)/bin/$(BINARY)" .
+
 .PHONY: test
 test: ## Run unit tests (fast, hermetic).
 	$(GO) test $(PKGS)
