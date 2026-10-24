@@ -116,6 +116,7 @@ type Model struct {
 	files    []git.FileChange
 	staged   map[string]bool // path -> staged in this session
 	cursor   int
+	fileTop  int    // first file row shown; the list scrolls to keep the cursor visible
 	typeIdx  int    // index into commit.Types
 	message  string // commit message being typed
 	focus    zone   // which zone owns the keyboard
@@ -338,8 +339,18 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// Update implements tea.Model.
+// Update implements tea.Model. Whatever moved the cursor, resized the
+// terminal or reloaded the files, the list then scrolls to keep the cursor in
+// view.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	if model, ok := next.(Model); ok {
+		next = model.followCursor()
+	}
+	return next, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case commitDoneMsg:
 		return m.afterCommit(msg.err)
@@ -557,8 +568,8 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	case m.settingsOpen:
 		return m.clickSettings(msg)
 	}
-	if m.dropOpen && (msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown) {
-		return m.scrollDropdown(msg.Button), nil
+	if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
+		return m.scroll(msg.Button == tea.MouseButtonWheelUp), nil
 	}
 	if msg.Action != tea.MouseActionRelease || msg.Button != tea.MouseButtonLeft {
 		return m, nil
@@ -591,13 +602,18 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// scrollDropdown moves the open dropdown's highlight one item with the wheel.
-func (m Model) scrollDropdown(wheel tea.MouseButton) Model {
-	if wheel == tea.MouseButtonWheelUp {
-		m.dropIdx = max(m.dropIdx-1, 0)
-	} else {
-		m.dropIdx = min(m.dropIdx+1, len(commit.Types)-1)
+// scroll moves one item with the wheel: the open dropdown's highlight, else
+// the file cursor.
+func (m Model) scroll(up bool) Model {
+	step := 1
+	if up {
+		step = -1
 	}
+	if m.dropOpen {
+		m.dropIdx = min(max(m.dropIdx+step, 0), len(commit.Types)-1)
+		return m
+	}
+	m.cursor = max(min(m.cursor+step, len(m.files)-1), 0)
 	return m
 }
 
@@ -691,9 +707,31 @@ func (m Model) logRows() int {
 	return r
 }
 
+// fileRows is how many files fit in the band; all of them while the terminal
+// size is not known yet.
+func (m Model) fileRows() int {
+	if m.height == 0 {
+		return max(len(m.files), 1)
+	}
+	return max(m.logRows(), 1)
+}
+
+// followCursor scrolls the file list just enough to show the cursor.
+func (m Model) followCursor() Model {
+	rows := m.fileRows()
+	if m.cursor < m.fileTop {
+		m.fileTop = m.cursor
+	}
+	if m.cursor >= m.fileTop+rows {
+		m.fileTop = m.cursor - rows + 1
+	}
+	m.fileTop = min(max(m.fileTop, 0), max(len(m.files)-rows, 0))
+	return m
+}
+
 type layout struct {
-	filesStart int // row of the first file
-	fileCount  int
+	filesStart int // row of the first visible file
+	fileCount  int // visible files
 	bandHeight int // rows the two-column (files ‖ log) band occupies
 	commitRow  int // the "[ type ▾ ] message" line (type and message share it)
 	dropStart  int // first dropdown or palette item row (only meaningful when open)
@@ -701,7 +739,7 @@ type layout struct {
 }
 
 func (m Model) layout() layout {
-	n := len(m.files)
+	n := min(len(m.files)-m.fileTop, m.fileRows())
 	band := max(n, 1) // a clean tree still gets its one-line notice
 	if m.logVisible() {
 		band = max(band, m.logRows())
@@ -742,7 +780,7 @@ func (m Model) hitTest(x, y int) hit {
 		if m.logVisible() && x >= m.leftColWidth() {
 			return hit{kind: hitNone} // clicked the read-only right column
 		}
-		return hit{hitFile, y - l.filesStart}
+		return hit{hitFile, m.fileTop + y - l.filesStart}
 	}
 	if m.dropOpen && y >= l.dropStart && y < l.dropStart+len(commit.Types) {
 		return hit{hitDropItem, y - l.dropStart}
@@ -833,10 +871,14 @@ func sectionTitle(label, hint string, w int) string {
 	return dimStyle.Bold(true).Render(label) + paint(faint, " · "+hint)
 }
 
+// header counts the marks and, when the list scrolls, which rows are shown.
 func (m Model) header() string {
 	marked := len(m.stagedFiles())
-	return fmt.Sprintf("  %s  %s %s", paint(green, bold.Render("nib")), dimStyle.Bold(true).Render("CAMBIOS"),
-		dim(fmt.Sprintf("%s de %s", count(marked, "marcado", "marcados"), count(len(m.files), "archivo", "archivos"))))
+	counts := fmt.Sprintf("%s de %s", count(marked, "marcado", "marcados"), count(len(m.files), "archivo", "archivos"))
+	if shown := m.layout().fileCount; shown < len(m.files) {
+		counts += fmt.Sprintf(" · viendo %d–%d", m.fileTop+1, m.fileTop+shown)
+	}
+	return fmt.Sprintf("  %s  %s %s", paint(green, bold.Render("nib")), dimStyle.Bold(true).Render("CAMBIOS"), dim(counts))
 }
 
 func count(n int, one, many string) string {
@@ -857,7 +899,8 @@ func (m Model) fileLines(w int) []string {
 		related[r.Path] = true
 	}
 	lines := make([]string, 0, len(m.files))
-	for i, f := range m.files {
+	for i := m.fileTop; i < m.fileTop+m.layout().fileCount; i++ {
+		f := m.files[i]
 		cursor := m.focus == zoneFiles && i == m.cursor
 		marker, mark := " ", paint(faint, "○")
 		if cursor {
