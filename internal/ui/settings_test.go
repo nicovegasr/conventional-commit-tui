@@ -36,7 +36,7 @@ func (f *fakeStore) Save(s settings.Settings) error {
 func storeModel(store *fakeStore) (Model, *fakeLogger) {
 	repo := &fakeRepo{status: []git.FileChange{{Path: "a.go", Status: 'M'}}}
 	lg := &fakeLogger{out: "abc123 feat: x\n"}
-	return New(repo, lg, &fakeHistory{}, store, &fakeAuditor{}), lg
+	return New(repo, lg, &fakeHistory{}, store, &fakeAuditor{}, &fakeDiffer{}, &fakeEditor{}), lg
 }
 
 // openSettings walks the palette into /settings.

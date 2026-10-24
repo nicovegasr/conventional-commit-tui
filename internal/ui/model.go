@@ -11,7 +11,8 @@
 // git log (ADR-0014), so a forgotten file is visible before committing.
 //
 // `/` on an empty message opens the command palette; /settings switches the
-// heavy parts off live and persists them (ADR-0015).
+// heavy parts off live and persists them (ADR-0015). /changes reviews the
+// diffs and hands a file to the user's editor (ADR-0017).
 package ui
 
 import (
@@ -146,6 +147,20 @@ type Model struct {
 	auditErr     error
 	auditTop     int // first hotspot row shown (scroll)
 
+	differ        Differ
+	editor        Editor
+	changesOpen   bool   // /changes screen replaces the commit view
+	changesPath   string // file whose diff is shown
+	changesQuery  string // search box filter
+	changesSearch bool   // typing in the search box
+	diffFocus     bool   // j/k scroll the diff instead of moving the file
+	diff          git.Diff
+	diffErr       error
+	diffLoading   bool
+	diffGen       int // numbers diffs; answers for another file are dropped
+	diffTop       int // first diff line shown (scroll)
+	diffDragging  bool
+
 	logger     Logger
 	logContent string
 	logErr     error
@@ -164,13 +179,15 @@ type Model struct {
 
 // New builds the initial model, loading the settings through store and the
 // working tree through repo. Unreadable settings fall back to the defaults.
-func New(repo Repo, logger Logger, history History, store Store, auditor Auditor) Model {
+func New(repo Repo, logger Logger, history History, store Store, auditor Auditor, differ Differ, editor Editor) Model {
 	prefs, prefsErr := store.Load()
 	m := Model{
 		repo:        repo,
 		logger:      logger,
 		store:       store,
 		auditor:     auditor,
+		differ:      differ,
+		editor:      editor,
 		prefs:       prefs,
 		logLoading:  prefs.ShowLog, // Init fetches it
 		history:     history,
@@ -248,6 +265,16 @@ func (m Model) poll() tea.Cmd {
 	}
 	gen := m.pollGen
 	return tea.Tick(time.Duration(m.prefs.ReloadSeconds)*time.Second, func(time.Time) tea.Msg { return pollMsg{gen: gen} })
+}
+
+// polled reloads the working tree, the log and an open diff, then schedules
+// the next tick. Ticks of a superseded interval are dropped.
+func (m Model) polled(msg pollMsg) (Model, tea.Cmd) {
+	if msg.gen != m.pollGen {
+		return m, nil
+	}
+	m, diff := m.reloadDiff()
+	return m, tea.Batch(m.loadStatus(), m.loadLog(), m.poll(), diff)
 }
 
 func (m Model) loadStatus() tea.Cmd {
@@ -357,10 +384,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case logLoadedMsg:
 		return m.logLoaded(msg)
 	case pollMsg:
-		if msg.gen != m.pollGen {
-			return m, nil
-		}
-		return m, tea.Batch(m.loadStatus(), m.loadLog(), m.poll())
+		return m.polled(msg)
 	case settingsSavedMsg:
 		if msg.err != nil {
 			m.flash = "✗ no se pudo guardar: " + lastLine(msg.err.Error())
@@ -375,6 +399,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.relatedLoaded(msg)
 	case auditLoadedMsg:
 		return m.auditLoaded(msg), nil
+	case diffLoadedMsg:
+		return m.diffLoaded(msg), nil
+	case editorClosedMsg:
+		return m.editorClosed(msg)
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -393,6 +421,8 @@ func (m Model) updateKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	switch {
+	case m.changesOpen:
+		return m.updateChanges(key)
 	case m.auditOpen:
 		return m.updateAudit(key)
 	case m.settingsOpen:
@@ -563,6 +593,8 @@ func typedText(key tea.KeyMsg) string {
 // message arrives at all.
 func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	switch {
+	case m.changesOpen:
+		return m.clickChanges(msg)
 	case m.auditOpen:
 		return m.clickAudit(msg)
 	case m.settingsOpen:
@@ -1003,6 +1035,8 @@ func (m Model) View() string {
 		return "nib: " + m.err.Error() + "\n"
 	}
 	switch {
+	case m.changesOpen:
+		return m.changesView()
 	case m.auditOpen:
 		return m.auditView()
 	case m.settingsOpen:
@@ -1102,7 +1136,7 @@ func (m Model) footer() string {
 		keys = append(keys, bold.Render(pair[0])+" "+dim(pair[1]))
 	}
 	line := ""
-	if !m.auditOpen && !m.settingsOpen { // the palette opens from the commit view only
+	if !m.changesOpen && !m.auditOpen && !m.settingsOpen { // the palette opens from the commit view only
 		line = paint(cyan, commandsButton) + "  "
 	}
 	switch {
@@ -1119,6 +1153,10 @@ func (m Model) footer() string {
 
 func (m Model) helpKeys() [][2]string {
 	switch {
+	case m.changesOpen && m.changesSearch:
+		return [][2]string{{"escribe", "filtra"}, {"enter", "listo"}}
+	case m.changesOpen:
+		return [][2]string{{"j/k", "mover"}, {"tab", "panel"}, {"n/p", "cambio"}, {"espacio", "marca"}, {"e", "editar"}, {"/", "buscar"}, {"esc", "vuelve"}}
 	case m.auditOpen:
 		return [][2]string{{"d", "ventana"}, {"j/k", "mover"}, {"esc", "vuelve"}}
 	case m.settingsOpen:
