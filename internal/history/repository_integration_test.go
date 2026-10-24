@@ -104,3 +104,22 @@ func TestResolveCommitAcceptsAnyRevision(t *testing.T) {
 		}
 	}
 }
+
+func TestIsAncestorTreatsAMissingCommitAsRewritten(t *testing.T) {
+	dir := t.TempDir()
+	gitForHistoryTest(t, dir, "init", "-q", "-b", "main")
+	gitForHistoryTest(t, dir, "config", "user.name", "Alex")
+	gitForHistoryTest(t, dir, "config", "user.email", "alex@example.test")
+	writeHistoryFile(t, dir, "a")
+	commitHistoryFile(t, dir, "first")
+	repo, err := Open(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// An indexed HEAD that was rewritten and then garbage-collected.
+	ok, err := repo.IsAncestor(context.Background(), strings.Repeat("ab", 20))
+	if ok || err != nil {
+		t.Errorf("IsAncestor(missing) = %v, %v; want false, nil", ok, err)
+	}
+}
