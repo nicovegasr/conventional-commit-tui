@@ -9,6 +9,11 @@ later goal — ADR-0004.)
 
 ### Added
 
+- `/` on an empty message opens a command palette (also the `/ comandos`
+  footer button). `/settings` switches the git-log panel, the related-files
+  panel and mouse capture on/off, sets the log scope and the auto-reload
+  interval (off · 1 · 2 · 5 · 10 s), live and persisted to
+  `~/.config/nib/settings.toml` (ADR-0015).
 - The TUI shows what usually changes with the marked files (`RELACIONADOS`,
   above the git log). Modified files that are related but not marked get a
   `+` in the panel and a `↔` in the file list. The history index is refreshed

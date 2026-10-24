@@ -9,6 +9,9 @@
 //
 // The right column shows what usually changes with the marked files above the
 // git log (ADR-0014), so a forgotten file is visible before committing.
+//
+// `/` on an empty message opens the command palette; /settings switches the
+// heavy parts off live and persists them (ADR-0015).
 package ui
 
 import (
@@ -24,6 +27,7 @@ import (
 
 	"github.com/nicovegasr/nib-git/internal/commit"
 	"github.com/nicovegasr/nib-git/internal/git"
+	"github.com/nicovegasr/nib-git/internal/settings"
 )
 
 // Repo is the narrow slice of git the commit flow needs. main.go injects a real
@@ -35,7 +39,7 @@ type Repo interface {
 }
 
 // Logger is the narrow slice of git the log panel needs. Optional and read-only
-// (ADR-0005): keeping it separate from Repo lets /settings disable it later.
+// (ADR-0005): keeping it separate from Repo lets /settings disable it.
 type Logger interface {
 	Log(scope string, limit int) (string, error)
 }
@@ -46,6 +50,12 @@ type Logger interface {
 type History interface {
 	Refresh() error
 	Related(files []string, limit int) ([]Related, error)
+}
+
+// Store persists the /settings options (ADR-0015).
+type Store interface {
+	Load() (settings.Settings, error)
+	Save(settings.Settings) error
 }
 
 // Related is a path that historically changed together with a marked file.
@@ -76,8 +86,12 @@ type logLoadedMsg struct {
 	err     error
 }
 
-// pollMsg asks for a background reload of the working tree and the log.
-type pollMsg struct{}
+// pollMsg asks for a background reload of the working tree and the log. Ticks
+// of a superseded interval (gen) are dropped.
+type pollMsg struct{ gen int }
+
+// settingsSavedMsg reports the outcome of persisting the settings.
+type settingsSavedMsg struct{ err error }
 
 // statusLoadedMsg carries a background working-tree reload.
 type statusLoadedMsg struct {
@@ -109,18 +123,24 @@ type Model struct {
 	flash    string // transient feedback (success, hint or failure), cleared on the next keystroke
 	err      error
 
-	width   int
-	height  int
-	showLog bool // git-log panel enabled (Phase 4 /settings will toggle it)
+	width  int
+	height int
+
+	store        Store
+	prefs        settings.Settings
+	pollGen      int  // numbers reload loops; a changed interval starts a new one
+	palette      bool // command palette open; its query is typed in the message field
+	paletteQuery string
+	paletteIdx   int
+	settingsOpen bool // /settings screen replaces the commit view
+	settingsIdx  int  // highlighted settings row
 
 	logger     Logger
-	logScope   string // "current" | "all"; "custom" deferred to Phase 4
 	logContent string
 	logErr     error
 	logLoading bool
 
 	history      History
-	showRelated  bool // related-files panel enabled (Phase 4 /settings will toggle it)
 	historyBusy  bool // index refresh in flight; queries wait for it
 	historyErr   error
 	related      []Related
@@ -131,18 +151,22 @@ type Model struct {
 	shortcuts map[string]int // type shortcut key -> index into commit.Types
 }
 
-// New builds the initial model and loads the working tree through repo.
-func New(repo Repo, logger Logger, history History) Model {
+// New builds the initial model, loading the settings through store and the
+// working tree through repo. Unreadable settings fall back to the defaults.
+func New(repo Repo, logger Logger, history History, store Store) Model {
+	prefs, prefsErr := store.Load()
 	m := Model{
 		repo:        repo,
 		logger:      logger,
-		showLog:     true,
-		logScope:    "current",
-		logLoading:  true, // Init fetches it
+		store:       store,
+		prefs:       prefs,
+		logLoading:  prefs.ShowLog, // Init fetches it
 		history:     history,
-		showRelated: true,
 		historyBusy: true, // Init refreshes it
 		shortcuts:   typeShortcuts(),
+	}
+	if prefsErr != nil {
+		m.flash = "✗ ajustes ilegibles, usando los de serie: " + lastLine(prefsErr.Error())
 	}
 	files, err := repo.Status()
 	if err != nil {
@@ -191,21 +215,27 @@ func typeShortcuts() map[string]int {
 
 const logFetchLimit = 100 // fetch a generous window; View crops to the panel height
 
-// loadLog fetches the git log off the UI goroutine.
+// loadLog fetches the git log off the UI goroutine; nothing while its panel is
+// off in /settings.
 func (m Model) loadLog() tea.Cmd {
-	logger, scope := m.logger, m.logScope
+	if !m.prefs.ShowLog {
+		return nil
+	}
+	logger, scope := m.logger, m.prefs.LogScope
 	return func() tea.Msg {
 		out, err := logger.Log(scope, logFetchLimit)
 		return logLoadedMsg{content: out, err: err}
 	}
 }
 
-const pollInterval = 2 * time.Second
-
 // poll schedules the next background reload, so edits, `git add` and commits
-// made outside nib show up without restarting it.
-func poll() tea.Cmd {
-	return tea.Tick(pollInterval, func(time.Time) tea.Msg { return pollMsg{} })
+// made outside nib show up without restarting it. Auto reload off: no tick.
+func (m Model) poll() tea.Cmd {
+	if m.prefs.ReloadSeconds == 0 {
+		return nil
+	}
+	gen := m.pollGen
+	return tea.Tick(time.Duration(m.prefs.ReloadSeconds)*time.Second, func(time.Time) tea.Msg { return pollMsg{gen: gen} })
 }
 
 func (m Model) loadStatus() tea.Cmd {
@@ -261,7 +291,7 @@ func (m Model) queryRelated() (Model, tea.Cmd) {
 		m.related, m.relatedErr = nil, nil
 		return m, nil
 	}
-	if !m.showRelated || m.historyBusy || m.historyErr != nil {
+	if !m.prefs.ShowRelated || m.historyBusy || m.historyErr != nil {
 		return m, nil
 	}
 	history, gen := m.history, m.relatedGen
@@ -288,8 +318,14 @@ func (m Model) relatedLoaded(msg relatedLoadedMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// Init implements tea.Model.
-func (m Model) Init() tea.Cmd { return tea.Batch(m.loadLog(), m.refreshHistory(), poll()) }
+// Init implements tea.Model. The mouse is enabled here, from the settings.
+func (m Model) Init() tea.Cmd {
+	cmds := []tea.Cmd{m.loadLog(), m.refreshHistory(), m.poll()}
+	if m.prefs.MouseCapture {
+		cmds = append(cmds, tea.EnableMouseCellMotion)
+	}
+	return tea.Batch(cmds...)
+}
 
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -299,7 +335,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case logLoadedMsg:
 		return m.logLoaded(msg)
 	case pollMsg:
-		return m, tea.Batch(m.loadStatus(), m.loadLog(), poll())
+		if msg.gen != m.pollGen {
+			return m, nil
+		}
+		return m, tea.Batch(m.loadStatus(), m.loadLog(), m.poll())
+	case settingsSavedMsg:
+		if msg.err != nil {
+			m.flash = "✗ no se pudo guardar: " + lastLine(msg.err.Error())
+		}
+		return m, nil
 	case statusLoadedMsg:
 		return m.statusLoaded(msg)
 	case historyRefreshedMsg:
@@ -323,6 +367,14 @@ func (m Model) updateKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.flash = "" // any keystroke dismisses the success flash
 	if key.String() == "ctrl+c" {
 		return m, tea.Quit
+	}
+	switch {
+	case m.settingsOpen:
+		return m.updateSettings(key)
+	case m.palette:
+		return m.updatePalette(key)
+	case key.String() == "/" && m.message == "" && !m.dropOpen:
+		return m.openPalette(), nil
 	}
 	switch m.focus {
 	case zoneFiles:
@@ -481,20 +533,14 @@ func typedText(key tea.KeyMsg) string {
 }
 
 // updateMouse handles left clicks (mapped through hitTest) and the wheel, which
-// scrolls the open dropdown. The mouse-capture toggle lives in /settings
-// (Phase 4); here it is always on (main.go enables it).
+// scrolls the open dropdown. With mouse capture off in /settings no mouse
+// message arrives at all.
 func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.dropOpen && msg.Button == tea.MouseButtonWheelUp {
-		if m.dropIdx > 0 {
-			m.dropIdx--
-		}
-		return m, nil
+	if m.settingsOpen {
+		return m.clickSettings(msg)
 	}
-	if m.dropOpen && msg.Button == tea.MouseButtonWheelDown {
-		if m.dropIdx < len(commit.Types)-1 {
-			m.dropIdx++
-		}
-		return m, nil
+	if m.dropOpen && (msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown) {
+		return m.scrollDropdown(msg.Button), nil
 	}
 	if msg.Action != tea.MouseActionRelease || msg.Button != tea.MouseButtonLeft {
 		return m, nil
@@ -516,10 +562,25 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.pickType(h.idx), nil
 	case hitMessage:
 		m.focus = zoneMessage
+	case hitPaletteItem:
+		m.paletteIdx = h.idx
+		return m.runCommand()
+	case hitCommands:
+		return m.openPalette(), nil
 	case hitNone:
-		m.dropOpen = false
+		m.dropOpen, m.palette = false, false
 	}
 	return m, nil
+}
+
+// scrollDropdown moves the open dropdown's highlight one item with the wheel.
+func (m Model) scrollDropdown(wheel tea.MouseButton) Model {
+	if wheel == tea.MouseButtonWheelUp {
+		m.dropIdx = max(m.dropIdx-1, 0)
+	} else {
+		m.dropIdx = min(m.dropIdx+1, len(commit.Types)-1)
+	}
+	return m
 }
 
 // stagedFiles returns the paths currently marked for commit, in file order so
@@ -576,7 +637,7 @@ const minWidthForLog = 80 // below this the minimal flow keeps the full width
 // be drawn: enabled and the terminal is wide enough that the minimal flow is
 // not squeezed.
 func (m Model) logVisible() bool {
-	return m.showLog && m.width >= minWidthForLog
+	return m.prefs.ShowLog && m.width >= minWidthForLog
 }
 
 // leftColWidth splits the two-column band in half: files left, log right.
@@ -586,6 +647,18 @@ func (m Model) leftColWidth() int {
 
 const reservedBelow = 5 // blank + commit line + preview + blank + help line under the band
 
+// belowRows is how many rows the open dropdown or palette adds under the
+// preview line.
+func (m Model) belowRows() int {
+	switch {
+	case m.dropOpen:
+		return len(commit.Types)
+	case m.palette:
+		return max(len(m.paletteMatches()), 1) // "sin comandos" when nothing matches
+	}
+	return 0
+}
+
 // logRows is how many rows the log column may fill. It is derived from the
 // terminal height and MUST leave room for everything drawn below the band —
 // including the open dropdown — plus a one-row safety margin. If the whole frame
@@ -593,9 +666,7 @@ const reservedBelow = 5 // blank + commit line + preview + blank + help line und
 // dropdown ghosts and mouse clicks land on the wrong rows.
 func (m Model) logRows() int {
 	r := m.height - headerRows - reservedBelow - 1 // -1: never fill the last row
-	if m.dropOpen {
-		r -= len(commit.Types) // the open dropdown needs its own rows below the commit line
-	}
+	r -= m.belowRows()                             // an open dropdown or palette needs its own rows below the commit line
 	if r < 0 {
 		return 0
 	}
@@ -607,7 +678,8 @@ type layout struct {
 	fileCount  int
 	bandHeight int // rows the two-column (files ‖ log) band occupies
 	commitRow  int // the "[ type ▾ ] message" line (type and message share it)
-	dropStart  int // first dropdown item row (only meaningful when open)
+	dropStart  int // first dropdown or palette item row (only meaningful when open)
+	footerRow  int // flash + help line, led by the "/ comandos" button
 }
 
 func (m Model) layout() layout {
@@ -623,6 +695,7 @@ func (m Model) layout() layout {
 		bandHeight: band,
 		commitRow:  commitRow,
 		dropStart:  commitRow + 2, // below the preview line
+		footerRow:  commitRow + 2 + m.belowRows() + 1,
 	}
 }
 
@@ -634,6 +707,8 @@ const (
 	hitType
 	hitMessage
 	hitDropItem
+	hitPaletteItem
+	hitCommands
 )
 
 type hit struct {
@@ -653,6 +728,12 @@ func (m Model) hitTest(x, y int) hit {
 	}
 	if m.dropOpen && y >= l.dropStart && y < l.dropStart+len(commit.Types) {
 		return hit{hitDropItem, y - l.dropStart}
+	}
+	if m.palette && y >= l.dropStart && y < l.dropStart+len(m.paletteMatches()) {
+		return hit{hitPaletteItem, y - l.dropStart}
+	}
+	if y == l.footerRow && x <= lipgloss.Width(commandsButton) {
+		return hit{kind: hitCommands}
 	}
 	if y == l.commitRow {
 		if x < typeBoxWidth(commit.Types[m.typeIdx].Name) {
@@ -784,7 +865,7 @@ func (m Model) fileLines(w int) []string {
 // nothing is marked. "+" flags a modified file that is not marked yet: the
 // likely omission.
 func (m Model) relatedLines(w int) []string {
-	if !m.showRelated || len(m.stagedFiles()) == 0 {
+	if !m.prefs.ShowRelated || len(m.stagedFiles()) == 0 {
 		return nil
 	}
 	title := sectionTitle("RELACIONADOS", "suelen cambiar con lo marcado", w)
@@ -845,7 +926,7 @@ func (m Model) logBody(w int) []string {
 
 // rightLines stacks RELACIONADOS over the git log, cropped to the band.
 func (m Model) rightLines(band, w int) []string {
-	scope := map[string]string{"current": "rama actual", "all": "todas las ramas"}[m.logScope]
+	scope := scopeNames[m.prefs.LogScope]
 	var lines []string
 	if related := m.relatedLines(w); related != nil {
 		lines = append(related, "")
@@ -859,6 +940,9 @@ func (m Model) rightLines(band, w int) []string {
 func (m Model) View() string {
 	if m.err != nil {
 		return "nib: " + m.err.Error() + "\n"
+	}
+	if m.settingsOpen {
+		return m.settingsView()
 	}
 
 	var b strings.Builder
@@ -889,6 +973,9 @@ func (m Model) View() string {
 	if m.dropOpen {
 		b.WriteString(m.dropdownView())
 	}
+	if m.palette {
+		b.WriteString(m.paletteView())
+	}
 	fmt.Fprintf(&b, "\n %s\n", m.footer())
 	return b.String()
 }
@@ -905,6 +992,8 @@ func (m Model) commitLine() string {
 	}
 	msg := paint(faint, "escribe el mensaje…")
 	switch {
+	case m.palette:
+		msg = paint(cyan, "/"+m.paletteQuery) + paint(green, "▌")
 	case m.focus == zoneMessage:
 		msg = m.message + paint(green, "▌")
 	case m.message != "":
@@ -940,28 +1029,33 @@ func (m Model) dropdownView() string {
 	return b.String()
 }
 
-// footer is the transient flash, colored by outcome, followed by the keys of
-// the focused zone.
+// footer is the "/ comandos" button, the transient flash colored by outcome,
+// and the keys of the focused zone. The button leads so hitTest finds it at a
+// fixed column.
 func (m Model) footer() string {
 	var keys []string
 	for _, pair := range m.helpKeys() {
 		keys = append(keys, bold.Render(pair[0])+" "+dim(pair[1]))
 	}
-	help := strings.Join(keys, dim(" · "))
+	line := paint(cyan, commandsButton) + "  "
 	switch {
 	case m.flash == "":
-		return help
 	case strings.HasPrefix(m.flash, "✓"):
-		return paint(green, m.flash) + "   " + help
+		line += paint(green, m.flash) + "   "
 	case strings.HasPrefix(m.flash, "✗"):
-		return paint(red, m.flash) + "   " + help
+		line += paint(red, m.flash) + "   "
 	default:
-		return paint(yellow, m.flash) + "   " + help
+		line += paint(yellow, m.flash) + "   "
 	}
+	return line + strings.Join(keys, dim(" · "))
 }
 
 func (m Model) helpKeys() [][2]string {
 	switch {
+	case m.settingsOpen:
+		return [][2]string{{"j/k", "mover"}, {"espacio", "cambia"}, {"esc", "vuelve"}}
+	case m.palette:
+		return [][2]string{{"↑/↓", "mover"}, {"enter", "abre"}, {"esc", "cierra"}}
 	case m.focus == zoneType && m.dropOpen:
 		return [][2]string{{"j/k", "mover"}, {"enter", "elige"}, {"esc", "cierra"}}
 	case m.focus == zoneType:

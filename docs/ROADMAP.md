@@ -82,12 +82,13 @@ than the Source Control panel or lazygit/gitui (both tried, neither fit). It is
   current/all. Off-by-toggle. Panel is **read-only** y se auto-oculta bajo 80
   columnas; la app es ahora una **sesión persistente** (un commit refresca el
   estado en vez de cerrar — ADR-0007). El scope `custom` queda diferido a Fase 4.
-- [ ] **Phase 4 — `/settings`.** Command palette + persisted TOML
-  (`~/.config/nib/settings.toml`), all toggles live. **Next.** Open design
-  questions (custom log scope, how the palette opens, which toggles) are listed
-  in `docs/handoff.md`.
+- [x] **Phase 4 — `/settings`.** `/` command palette + persisted TOML
+  (`~/.config/nib/settings.toml`), all toggles live: log panel, related panel,
+  mouse capture, log scope, auto-reload interval. No custom log command;
+  `/audit` rows wait for Phase 5 (ADR-0015).
 - [ ] **Phase 5 — `/audit`.** Render hotspots, `--days`/`--exclude`, threshold
-  coloring from settings.
+  coloring from settings. **Next.** Joins the `/` palette and adds its rows to
+  `/settings`.
 - [ ] **Phase 6 — `/stats`.** Commit-type breakdown view; later timeline/authors.
 - [ ] **Phase 7 — release.** `gh repo create nib-git`, push, tag `v0.1.0`,
   build/install instructions, maybe `brew`/`go install`.
