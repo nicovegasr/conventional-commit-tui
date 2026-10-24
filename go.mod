@@ -6,12 +6,12 @@ go 1.22
 require github.com/charmbracelet/bubbletea v0.27.1
 
 require (
+	github.com/BurntSushi/toml v1.5.0
 	github.com/charmbracelet/lipgloss v0.13.0
 	go.etcd.io/bbolt v1.3.11
 )
 
 require (
-	github.com/BurntSushi/toml v1.5.0 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/charmbracelet/x/ansi v0.1.4 // indirect
 	github.com/charmbracelet/x/input v0.1.0 // indirect
