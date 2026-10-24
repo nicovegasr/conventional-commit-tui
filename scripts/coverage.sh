@@ -22,6 +22,7 @@ DOMAIN_PKGS=(
 	./internal/settings
 	./internal/index
 	./internal/pathignore
+	./internal/editor
 )
 
 fail=0
