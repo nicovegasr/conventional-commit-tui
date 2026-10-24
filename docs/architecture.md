@@ -37,7 +37,8 @@ set of typed domain packages that shell out to `git`.
 ```
 main.go                 entrypoint; builds the TUI and injects adapters
 internal/commit         conventional-commit types + Format()
-internal/git            git CLI wrappers: Status, Stage, Commit, Log
+internal/git            git CLI wrappers: Status, Stage, Commit, Log, DiffFile
+internal/editor         picks the user's editor for /changes (ADR-0017)
 internal/audit          /audit hotspots (by commit frequency) + .auditignore
 internal/stats          /stats commits-by-type breakdown
 internal/settings       toggleable options (Default() = everything on)
