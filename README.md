@@ -1,4 +1,4 @@
-#sdasd nib
+# nib
 
 Local repository intelligence from Git history, for humans and developer tools.
 Nib's analytical core indexes the history reachable from HEAD and explains which
