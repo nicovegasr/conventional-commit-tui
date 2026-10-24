@@ -120,7 +120,7 @@ func TestEveryChangeIsSaved(t *testing.T) {
 	store := &fakeStore{}
 	m, _ := storeModel(store)
 	m = openSettings(t, m)
-	m, cmd := changeRow(m, 0)
+	m, cmd := changeRow(m, int(rowLog))
 	if _, ok := batched[settingsSavedMsg](cmd); !ok {
 		t.Fatal("a change must be saved")
 	}
@@ -131,7 +131,7 @@ func TestEveryChangeIsSaved(t *testing.T) {
 
 func TestLogOffStopsReloadingIt(t *testing.T) {
 	m, lg := storeModel(&fakeStore{})
-	m, _ = changeRow(openSettings(t, m), 0)
+	m, _ = changeRow(openSettings(t, m), int(rowLog))
 	if m.logVisible() {
 		t.Error("the log panel must hide")
 	}
@@ -145,29 +145,38 @@ func TestLogOffStopsReloadingIt(t *testing.T) {
 
 func TestLogScopeTogglesAndReloads(t *testing.T) {
 	m, lg := storeModel(&fakeStore{})
-	m, cmd := changeRow(openSettings(t, m), 3)
+	m, cmd := changeRow(openSettings(t, m), int(rowScope))
 	if m.prefs.LogScope != settings.ScopeAll || !m.logLoading {
 		t.Fatalf("scope %q loading %v", m.prefs.LogScope, m.logLoading)
 	}
 	if _, ok := batched[logLoadedMsg](cmd); !ok || lg.scopeArg != settings.ScopeAll {
 		t.Errorf("log reloaded with scope %q", lg.scopeArg)
 	}
-	if m, _ = changeRow(m, 3); m.prefs.LogScope != settings.ScopeCurrent {
+	if m, _ = changeRow(m, int(rowScope)); m.prefs.LogScope != settings.ScopeCurrent {
 		t.Error("the scope toggles back to the current branch")
+	}
+}
+
+func TestScopeOnlyChangesWhileTheLogIsOn(t *testing.T) {
+	m, _ := storeModel(&fakeStore{})
+	m, _ = changeRow(openSettings(t, m), int(rowLog))
+	m, cmd := changeRow(m, int(rowScope))
+	if m.prefs.LogScope != settings.ScopeCurrent || cmd != nil {
+		t.Errorf("scope %q changed with the log off", m.prefs.LogScope)
 	}
 }
 
 func TestRelatedOffClearsThePanel(t *testing.T) {
 	m, _ := storeModel(&fakeStore{})
 	m.related = []Related{{Path: "b.go"}}
-	if m, _ = changeRow(openSettings(t, m), 1); m.prefs.ShowRelated || m.related != nil {
+	if m, _ = changeRow(openSettings(t, m), int(rowRelated)); m.prefs.ShowRelated || m.related != nil {
 		t.Errorf("related off: prefs %v related %v", m.prefs.ShowRelated, m.related)
 	}
 }
 
 func TestMouseCaptureTogglesLive(t *testing.T) {
 	m, _ := storeModel(&fakeStore{})
-	m, cmd := changeRow(openSettings(t, m), 2)
+	m, cmd := changeRow(openSettings(t, m), int(rowMouse))
 	if m.prefs.MouseCapture {
 		t.Fatal("mouse capture should switch off")
 	}
@@ -186,7 +195,7 @@ func TestMouseCaptureTogglesLive(t *testing.T) {
 func TestReloadIntervalStartsANewLoopAndDropsTheOld(t *testing.T) {
 	m, _ := storeModel(&fakeStore{})
 	old := m.pollGen
-	m, _ = changeRow(openSettings(t, m), 4)
+	m, _ = changeRow(openSettings(t, m), int(rowReload))
 	if m.prefs.ReloadSeconds != 5 || m.pollGen == old {
 		t.Fatalf("reload %d gen %d", m.prefs.ReloadSeconds, m.pollGen)
 	}

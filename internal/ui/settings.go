@@ -95,11 +95,26 @@ func (m Model) paletteView() string {
 	return b.String()
 }
 
-// settingRow is one line of /settings; rows are changed by index in change.
+type rowID int
+
+const (
+	rowLog rowID = iota
+	rowScope
+	rowRelated
+	rowMouse
+	rowReload
+)
+
+// settingRow is one line of /settings. A row with a parent belongs to it: it
+// is drawn under it and only changes while the parent is on.
 type settingRow struct {
+	id          rowID
 	label, hint string
 	value       func(settings.Settings) string
+	parent      func(settings.Settings) bool
 }
+
+func (r settingRow) enabled(s settings.Settings) bool { return r.parent == nil || r.parent(s) }
 
 func onOff(on bool) string {
 	if on {
@@ -109,16 +124,17 @@ func onOff(on bool) string {
 }
 
 var settingRows = []settingRow{
-	{"Panel git log", "apágalo si va lento", func(s settings.Settings) string { return onOff(s.ShowLog) }},
-	{"Archivos relacionados", "lo que suele cambiar con lo marcado", func(s settings.Settings) string { return onOff(s.ShowRelated) }},
-	{"Mouse capture", "off = selección y scroll nativos del terminal", func(s settings.Settings) string { return onOff(s.MouseCapture) }},
-	{"git log: alcance", "rama actual / todas las ramas", func(s settings.Settings) string { return scopeNames[s.LogScope] + " ▾" }},
-	{"Recarga automática", "cada cuánto se relee el árbol", func(s settings.Settings) string {
+	{rowLog, "Panel git log", "apágalo si va lento", func(s settings.Settings) string { return onOff(s.ShowLog) }, nil},
+	{rowScope, "└ alcance", "rama actual / todas las ramas", func(s settings.Settings) string { return scopeNames[s.LogScope] + " ▾" },
+		func(s settings.Settings) bool { return s.ShowLog }},
+	{rowRelated, "Archivos relacionados", "lo que suele cambiar con lo marcado", func(s settings.Settings) string { return onOff(s.ShowRelated) }, nil},
+	{rowMouse, "Mouse capture", "off = selección y scroll nativos del terminal", func(s settings.Settings) string { return onOff(s.MouseCapture) }, nil},
+	{rowReload, "Recarga automática", "cada cuánto se relee el árbol", func(s settings.Settings) string {
 		if s.ReloadSeconds == 0 {
 			return "off ▾"
 		}
 		return fmt.Sprintf("%d s ▾", s.ReloadSeconds)
-	}},
+	}, nil},
 }
 
 func (m Model) updateSettings(key tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -135,33 +151,38 @@ func (m Model) updateSettings(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// change toggles or cycles row, applies it live and saves it.
+// change toggles or cycles row, applies it live and saves it. A row whose
+// parent is off does not change.
 func (m Model) change(row int) (Model, tea.Cmd) {
+	r := settingRows[row]
+	if !r.enabled(m.prefs) {
+		return m, nil
+	}
 	var apply tea.Cmd
-	switch row {
-	case 0:
+	switch r.id {
+	case rowLog:
 		m.prefs.ShowLog = !m.prefs.ShowLog
 		m.logLoading = m.prefs.ShowLog
 		apply = m.loadLog()
-	case 1:
+	case rowRelated:
 		m.prefs.ShowRelated = !m.prefs.ShowRelated
 		m.related, m.relatedErr = nil, nil
 		m, apply = m.queryRelated()
-	case 2:
+	case rowMouse:
 		m.prefs.MouseCapture = !m.prefs.MouseCapture
 		apply = tea.DisableMouse
 		if m.prefs.MouseCapture {
 			apply = tea.EnableMouseCellMotion
 		}
-	case 3:
+	case rowScope:
 		if m.prefs.LogScope == settings.ScopeAll {
 			m.prefs.LogScope = settings.ScopeCurrent
 		} else {
 			m.prefs.LogScope = settings.ScopeAll
 		}
-		m.logLoading = m.prefs.ShowLog
+		m.logLoading = true
 		apply = m.loadLog()
-	case 4:
+	case rowReload:
 		m.prefs.ReloadSeconds = settings.NextReload(m.prefs.ReloadSeconds)
 		m.pollGen++
 		apply = m.poll()
@@ -191,10 +212,11 @@ func (m Model) settingsView() string {
 		}
 		value := r.value(m.prefs)
 		color := cyan
-		if strings.HasPrefix(value, "ON") {
-			color = green
-		} else if strings.HasPrefix(value, "OFF") {
+		switch {
+		case !r.enabled(m.prefs), strings.HasPrefix(value, "OFF"):
 			color = gray
+		case strings.HasPrefix(value, "ON"):
+			color = green
 		}
 		fmt.Fprintf(&b, "%s %s %s  %s\n", marker, padRight(label, 24), padRight(paint(color, value), 18), dim(r.hint))
 	}
