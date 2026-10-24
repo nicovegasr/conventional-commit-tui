@@ -22,7 +22,9 @@ Next milestones:
    ADR-0012 fixed the case population: `--case-max-files` is separate from the
    predictor's `--max-files`, and non-merge commits are sampled from the whole
    DAG (Flask: 67 cases instead of 2). Earlier numbers are not comparable.
-   Next: re-run the replication under ADR-0012 before tuning further.
+   ADR-0013 re-ran the replication under it: the defaults hold (better than
+   the previous ones on six of seven repositories), though their margin over
+   unfiltered co-change on validation is under a point.
 2. Measure real repositories at increasing sizes and profile ingestion/query costs.
    Initial Astro smoke completed; repeat under controlled conditions and include
    another repository size before making capacity claims.

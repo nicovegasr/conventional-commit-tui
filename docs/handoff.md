@@ -69,8 +69,10 @@ change.
 ADR-0012 fixed both protocol flaws found there: held-out commits are capped by
 `--case-max-files`, independent of the predictor's `--max-files`, and sampled
 from every non-merge commit of the DAG by author time instead of the
-first-parent chain. Re-run the seven-repository replication under it, then
-capture incremental update and query latency distributions. Only after
+first-parent chain. ADR-0013 re-ran the seven-repository replication under
+it: the defaults beat the previous ones on six of seven repositories and the
+grid did not justify a change. Next, capture incremental update and query
+latency distributions. Only after
 that should symbol identity, extraction and impact semantics be designed.
 
 ## Known boundaries
