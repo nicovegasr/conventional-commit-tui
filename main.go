@@ -1,7 +1,7 @@
 // Command nib is a fast, terminal-first commit tool (conventional commits TUI).
 //
-// Run with no arguments to open the commit flow. Slash-commands (/changes,
-// /audit, /settings) drive the heavier features. See docs/ux-mockups.html for the
+// Run with no arguments to open the commit flow. Slash-commands
+// (/changes, /stats, /audit, /settings) drive the heavier features. See docs/ux-mockups.html for the
 // intended UX.
 package main
 
@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/nicovegasr/nib-git/internal/git"
 	"github.com/nicovegasr/nib-git/internal/index"
 	"github.com/nicovegasr/nib-git/internal/settings"
+	"github.com/nicovegasr/nib-git/internal/stats"
 	"github.com/nicovegasr/nib-git/internal/ui"
 )
 
@@ -58,6 +60,11 @@ func (h indexHistory) Related(files []string, limit int) ([]ui.Related, error) {
 type gitAudit struct{}
 
 func (gitAudit) Audit(days int) (audit.Report, error) { return audit.Run(days) }
+
+// gitStats adapts the stats package to the ui.StatsReader port.
+type gitStats struct{}
+
+func (gitStats) Stats(days int) (stats.Report, error) { return stats.Run(days, time.Now()) }
 
 // gitDiffer adapts the git package to the ui.Differ port.
 type gitDiffer struct{}
@@ -112,7 +119,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "nib:", err)
 		os.Exit(1)
 	}
-	model := ui.New(gitRepo{}, gitLogger{}, indexHistory{ctx: context.Background()}, fileStore{}, gitAudit{}, gitDiffer{}, userEditor{})
+	model := ui.New(gitRepo{}, gitLogger{}, indexHistory{ctx: context.Background()}, fileStore{}, gitAudit{}, gitStats{}, gitDiffer{}, userEditor{})
 	p := tea.NewProgram(model, tea.WithAltScreen()) // the model enables the mouse from its settings
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "nib:", err)

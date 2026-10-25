@@ -17,6 +17,11 @@ later goal — ADR-0004.)
 
 ### Added
 
+- `/stats` in the command palette: commits of the current branch by
+  conventional type (bars, count and share, `sin tipo` for subjects without a
+  `type:` prefix) and their activity over the window, per day up to 30 days
+  and per week beyond. `d` or a click on the title cycles 7 · 30 · 90 · 365
+  days (ADR-0018).
 - `/changes` in the command palette: the changed files on the left, filtered
   by a search box, and the whole selected file on the right with added lines
   on green and removed on red. A scrollbar marks where the changes are and can

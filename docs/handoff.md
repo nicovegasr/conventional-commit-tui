@@ -1,19 +1,20 @@
 # nib — handoff
 
-Date: 2026-10-24.
+Date: 2026-10-25.
 
-## Next session: Phase 6 — `/stats`
+## Next session: Phase 7 — release
 
-Phases 4 and 5 are done. `/` on an empty message (or the `/ comandos` button)
-opens the palette with `/audit` (ADR-0016) and `/settings` (ADR-0015).
-`/audit` is a full screen fed by the `ui.Auditor` port; `d` or a click on the
-title cycles the window. `/stats` follows the same shape: a command in
-`commands` (`internal/ui/settings.go`), a port, and a screen file like
-`internal/ui/audit.go` over `internal/stats`.
+Phases 4–6 are done. The `/` palette (or the `/ comandos` button) opens
+`/audit` (ADR-0016), `/settings` (ADR-0015), `/changes` (ADR-0017) and
+`/stats` (ADR-0018). Each screen is a file in `internal/ui` fed by its own
+injected port. nib moves to the repository root on start, so it runs from
+any subdirectory, and new folders list each file.
 
-Not verified by hand yet: the real TUI was not driven in a terminal (no
-tmux); `make ci`, the model tests and a render of `/audit` over this
-repository's real history ran.
+Open for the release: how to distribute (`go install`, a Homebrew tap or
+prebuilt binaries) and the `v0.1.0` tag.
+
+Verified by hand: `/changes` with vim as `$EDITOR`. `/stats` was rendered
+over this repository's history in a test, not driven in a terminal.
 
 ## Analysis track — where it stands
 

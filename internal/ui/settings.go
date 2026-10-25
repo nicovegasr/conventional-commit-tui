@@ -17,11 +17,12 @@ var scopeNames = map[string]string{settings.ScopeCurrent: "rama actual", setting
 
 type command struct{ name, desc string }
 
-// commands is the palette's list; /stats joins it in a later phase.
+// commands is the palette's list.
 var commands = []command{
 	{"audit", "archivos que más cambian (hotspots)"},
 	{"settings", "paneles, ratón, alcance del log, recarga, audit"},
 	{"changes", "diff de cada archivo, y abrirlo en tu editor"},
+	{"stats", "commits por tipo y actividad"},
 }
 
 func (m Model) openPalette() Model {
@@ -74,6 +75,8 @@ func (m Model) runCommand() (Model, tea.Cmd) {
 	}
 	m.palette = false
 	switch matches[m.paletteIdx].name {
+	case "stats":
+		return m.openStats()
 	case "changes":
 		return m.openChanges()
 	case "audit":

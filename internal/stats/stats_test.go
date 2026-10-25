@@ -2,7 +2,9 @@ package stats
 
 import (
 	"errors"
+	"reflect"
 	"testing"
+	"time"
 )
 
 func TestTypeOf(t *testing.T) {
@@ -11,10 +13,12 @@ func TestTypeOf(t *testing.T) {
 		"fix(ui): crash":       "fix",
 		"  refactor: tidy  ":   "refactor",
 		"docs(readme): update": "docs",
-		"no prefix here":       "other",
-		"":                     "other",
-		":empty type":          "other",
-		"two words: nope":      "other",
+		"feat!: break":         "feat",
+		"no prefix here":       Untyped,
+		"Feat/audit (#13)":     Untyped,
+		"":                     Untyped,
+		":empty type":          Untyped,
+		"two words: nope":      Untyped,
 	}
 	for subject, want := range cases {
 		if got := typeOf(subject); got != want {
@@ -23,61 +27,68 @@ func TestTypeOf(t *testing.T) {
 	}
 }
 
-func TestCountByTypeSortsDescending(t *testing.T) {
-	out := "feat: a\nfix: b\nfeat: c\nfeat: d\nchore: e\nfix: f\n"
-	got := countByType(out)
+// now is a fixed clock: Saturday 25 October 2026, mid-afternoon.
+var now = time.Date(2026, 10, 25, 15, 0, 0, 0, time.Local)
 
-	if len(got) != 3 {
-		t.Fatalf("expected 3 types, got %d: %+v", len(got), got)
+func TestReportCountsTypesByDescendingCountThenName(t *testing.T) {
+	out := "2026-10-25\tfeat: a\n2026-10-24\tfix: b\n2026-10-24\tfeat: c\n2026-10-20\tchore: e\n2026-10-20\tfix: f\n2026-10-19\tdocs: g\n"
+	got := report(out, 30, now)
+	want := []TypeCount{{"feat", 2}, {"fix", 2}, {"chore", 1}, {"docs", 1}}
+	if !reflect.DeepEqual(got.Types, want) || got.Total != 6 {
+		t.Errorf("Types = %+v (total %d), want %+v", got.Types, got.Total, want)
 	}
-	if got[0].Type != "feat" || got[0].Count != 3 {
-		t.Errorf("top = %+v, want feat:3", got[0])
+}
+
+func TestReportBucketsDailyUpToThirtyDays(t *testing.T) {
+	got := report("2026-10-25\tfeat: a\n2026-10-25\tfix: b\n2026-10-24\tfeat: c\n2026-10-19\tfeat: d\n", 7, now)
+	if got.BucketDays != 1 {
+		t.Fatalf("BucketDays = %d, want 1", got.BucketDays)
 	}
-	// descending order invariant
-	for i := 1; i < len(got); i++ {
-		if got[i-1].Count < got[i].Count {
-			t.Errorf("not sorted descending: %+v", got)
+	want := []int{1, 0, 0, 0, 0, 1, 2} // 19 Oct … 25 Oct, today last
+	if !reflect.DeepEqual(got.Activity, want) {
+		t.Errorf("Activity = %v, want %v", got.Activity, want)
+	}
+}
+
+func TestReportBucketsWeeklyBeyondThirtyDays(t *testing.T) {
+	got := report("2026-10-25\tfeat: a\n2026-10-19\tfeat: b\n2026-10-18\tfeat: c\n2026-07-28\tfeat: old\n", 90, now)
+	if got.BucketDays != 7 || len(got.Activity) != 13 {
+		t.Fatalf("BucketDays %d with %d buckets, want 7 and 13", got.BucketDays, len(got.Activity))
+	}
+	last := got.Activity[len(got.Activity)-2:]
+	if !reflect.DeepEqual(last, []int{1, 2}) {
+		t.Errorf("last two weeks = %v, want [1 2]", last)
+	}
+	if got.Activity[0] != 1 {
+		t.Errorf("the oldest week = %d, want 1", got.Activity[0])
+	}
+}
+
+func TestReportSkipsBlankAndUndatedLines(t *testing.T) {
+	got := report("\n\nnot-a-date\tfeat: x\n2025-01-01\tfeat: too old\n", 30, now)
+	if got.Total != 2 || len(got.Types) != 1 {
+		t.Errorf("an undated commit still counts by type: %+v", got)
+	}
+	for _, n := range got.Activity {
+		if n != 0 {
+			t.Errorf("dates outside the window must not land in a bucket: %v", got.Activity)
 		}
 	}
 }
 
-func TestCountByTypeIgnoresBlankLines(t *testing.T) {
-	if got := countByType("\n\n  \n"); len(got) != 0 {
-		t.Errorf("blank input should yield no counts, got %+v", got)
-	}
-}
+func TestRunReadsTheWindowFromGit(t *testing.T) {
+	orig := gitLog
+	t.Cleanup(func() { gitLog = orig })
 
-func TestSince(t *testing.T) {
-	cases := map[int]string{0: "30 days ago", -5: "30 days ago", 7: "7 days ago", 30: "30 days ago"}
-	for in, want := range cases {
-		if got := since(in); got != want {
-			t.Errorf("since(%d) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-func TestByTypeUsesStubbedLog(t *testing.T) {
-	orig := gitLogSubjects
-	t.Cleanup(func() { gitLogSubjects = orig })
-
-	gitLogSubjects = func(_ int) (string, error) { return "feat: a\nfix: b\n", nil }
-	got, err := ByType(30)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 2 {
-		t.Errorf("expected 2 types, got %+v", got)
+	var gotDays int
+	gitLog = func(days int) (string, error) { gotDays = days; return "2026-10-25\tfeat: a\n", nil }
+	got, err := Run(7, now)
+	if err != nil || gotDays != 7 || got.Total != 1 {
+		t.Errorf("Run = %+v, %v (asked %d days)", got, err, gotDays)
 	}
 
-	gitLogSubjects = func(_ int) (string, error) { return "", errors.New("boom") }
-	if _, err := ByType(30); err == nil {
-		t.Error("expected error to propagate")
-	}
-}
-
-func TestCountByTypeBreaksTiesByType(t *testing.T) {
-	got := countByType("fix: a.\nfeat: b.\n")
-	if got[0].Type != "feat" || got[1].Type != "fix" {
-		t.Errorf("ties must be ordered by type, got %+v", got)
+	gitLog = func(int) (string, error) { return "", errors.New("boom") }
+	if _, err := Run(7, now); err == nil {
+		t.Error("expected the error to propagate")
 	}
 }
