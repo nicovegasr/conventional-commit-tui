@@ -90,6 +90,10 @@ func typeColor(t string) lipgloss.TerminalColor {
 
 const typeCol = 10
 
+// statsChromeRows are the rows around the type bars: title, section titles,
+// the activity row and its axis, blank lines, footer and a safety row.
+const statsChromeRows = 10
+
 func (m Model) statsView() string {
 	w := m.width
 	if w == 0 {
@@ -122,14 +126,14 @@ func (m Model) statsView() string {
 func (m Model) typeLines(w int) []string {
 	r := m.statsReport
 	barW := min(max(w-typeCol-16, 5), 40)
-	rows := len(r.Types)
-	if m.height > 0 {
-		rows = max(m.height-12, 1) // title, section titles, activity, footer
+	shown := len(r.Types)
+	if free := m.height - statsChromeRows; m.height > 0 && shown > free {
+		shown = max(free-1, 1) // the last free row says how many are left out
 	}
 	var lines []string
 	for i, t := range r.Types {
-		if i == rows {
-			lines = append(lines, dim(fmt.Sprintf("+%d tipos más", len(r.Types)-rows)))
+		if i == shown {
+			lines = append(lines, dim(fmt.Sprintf("+%d tipos más", len(r.Types)-shown)))
 			break
 		}
 		bar := strings.Repeat("█", max(t.Count*barW/r.Types[0].Count, 1))
