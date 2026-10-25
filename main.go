@@ -88,6 +88,16 @@ func (fileStore) Save(s settings.Settings) error {
 	return settings.Save(path, s)
 }
 
+// moveToRepoRoot makes the commit TUI work from any subdirectory: the paths
+// it stages and diffs are relative to the repository root.
+func moveToRepoRoot() error {
+	root, err := git.Root()
+	if err != nil {
+		return err
+	}
+	return os.Chdir(root)
+}
+
 func main() {
 	if len(os.Args) > 1 {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -97,6 +107,10 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	}
+	if err := moveToRepoRoot(); err != nil {
+		fmt.Fprintln(os.Stderr, "nib:", err)
+		os.Exit(1)
 	}
 	model := ui.New(gitRepo{}, gitLogger{}, indexHistory{ctx: context.Background()}, fileStore{}, gitAudit{}, gitDiffer{}, userEditor{})
 	p := tea.NewProgram(model, tea.WithAltScreen()) // the model enables the mouse from its settings

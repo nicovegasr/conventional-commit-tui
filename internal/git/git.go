@@ -18,8 +18,10 @@ type FileChange struct {
 }
 
 // Status returns the working-tree changes via `git status --porcelain -z`.
+// Every untracked file is listed, not just its new folder, so each one can be
+// marked and diffed on its own.
 func Status() ([]FileChange, error) {
-	out, err := run("status", "--porcelain", "-z")
+	out, err := run("status", "--porcelain", "-z", "--untracked-files=all")
 	if err != nil {
 		return nil, err
 	}
@@ -75,6 +77,13 @@ func Log(scope string, limit int) (string, error) {
 		args = append(args, "-n", strconv.Itoa(limit))
 	}
 	return run(args...)
+}
+
+// Root is the repository's top-level directory. `git status` paths are
+// relative to it, so nib runs from there whatever directory it starts in.
+func Root() (string, error) {
+	out, err := run("rev-parse", "--show-toplevel")
+	return strings.TrimSpace(out), err
 }
 
 // run executes git with the given args. It is a package var so tests can stub

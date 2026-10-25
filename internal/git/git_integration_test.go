@@ -178,3 +178,50 @@ func TestDiffFileShowsTrackedAndUntrackedChanges(t *testing.T) {
 		t.Errorf("untracked diff = %+v", d)
 	}
 }
+
+func TestStageFromASubdirectoryAfterMovingToTheRoot(t *testing.T) {
+	newRepo(t)
+	if err := os.Mkdir("docs", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, "README.md", "a\n")
+	want, err := Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("docs"); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := Root()
+	if err != nil || root != want {
+		t.Fatalf("Root() from docs/ = %q, %v; want %q", root, err, want)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Stage([]string{changes[0].Path}); err != nil {
+		t.Errorf("status paths must be stageable from the root: %v", err)
+	}
+}
+
+func TestStatusListsTheFilesOfANewFolder(t *testing.T) {
+	newRepo(t)
+	if err := os.Mkdir("pkg", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, "pkg/a.go", "package pkg\n")
+	writeFile(t, "pkg/b.go", "package pkg\n")
+
+	changes, err := Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 2 || changes[0].Path != "pkg/a.go" {
+		t.Errorf("Status() = %+v, want each file of pkg/", changes)
+	}
+}
