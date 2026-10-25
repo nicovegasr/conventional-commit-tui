@@ -77,6 +77,13 @@ func Log(scope string, limit int) (string, error) {
 	return run(args...)
 }
 
+// Root is the repository's top-level directory. `git status` paths are
+// relative to it, so nib runs from there whatever directory it starts in.
+func Root() (string, error) {
+	out, err := run("rev-parse", "--show-toplevel")
+	return strings.TrimSpace(out), err
+}
+
 // run executes git with the given args. It is a package var so tests can stub
 // the shell-out and exercise the parsing without a real repository. A failure
 // still returns stdout: `diff --no-index` exits 1 just to say files differ.

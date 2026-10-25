@@ -7,6 +7,12 @@ later goal — ADR-0004.)
 
 ## [Unreleased]
 
+### Fixed
+
+- nib works from any subdirectory of the repository: it moves to the root,
+  where `git status` paths point, so marking and committing a file outside
+  the current directory no longer fails with `pathspec did not match`.
+
 ### Added
 
 - `/changes` in the command palette: the changed files on the left, filtered

@@ -132,3 +132,23 @@ func TestFailurePrefersStderrThenStdout(t *testing.T) {
 		}
 	}
 }
+
+func TestRootAsksGitForTheTopLevel(t *testing.T) {
+	var gotArgs []string
+	stubRun(t, func(args ...string) (string, error) { gotArgs = args; return "/repo\n", nil })
+
+	root, err := Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root != "/repo" || !reflect.DeepEqual(gotArgs, []string{"rev-parse", "--show-toplevel"}) {
+		t.Errorf("Root() = %q with args %v", root, gotArgs)
+	}
+}
+
+func TestRootPropagatesError(t *testing.T) {
+	stubRun(t, func(_ ...string) (string, error) { return "", errors.New("not a git repository") })
+	if _, err := Root(); err == nil {
+		t.Error("expected error outside a repository")
+	}
+}
