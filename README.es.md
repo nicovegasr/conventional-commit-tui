@@ -17,7 +17,8 @@ Pensada para tenerla abierta en la terminal de VSCode e ir commiteando al vuelo.
 1. **Commits en una línea**: marcas archivos → eliges el tipo → escribes el mensaje → `enter`. Con ratón o teclado.
 2. **Archivos relacionados**: qué suele cambiar con lo que has marcado, y cuáles de esos tienes modificados sin marcar (el típico test que se te olvida).
 3. **Análisis desde la CLI**: `nib coupled <archivo>` explica qué cambia con un archivo, con porcentajes y los commits que lo demuestran.
-4. **Medido, no prometido**: `nib evaluate` comprueba en commits reales si las sugerencias aciertan. Resultados más abajo.
+4. **Dentro del TUI, a un `/`**: revisa cada diff y salta a tu editor (`/changes`), mira tus commits por tipo (`/stats`), encuentra los archivos que más cambian (`/audit`) y apaga lo pesado (`/settings`).
+5. **Medido, no prometido**: `nib evaluate` comprueba en commits reales si las sugerencias aciertan. Resultados más abajo.
 
 Todo es local: nib solo lee tu repo con `git` y guarda su índice dentro de `.git/`.
 
@@ -25,12 +26,13 @@ Todo es local: nib solo lee tu repo con `git` y guarda su índice dentro de `.gi
 
 ## Instalación
 
-Requiere Go 1.22+ y git.
+Requiere Go 1.26+ y git.
 
 ```bash
 git clone https://github.com/nicovegasr/nib-git
 cd nib-git
 make build                     # genera ./nib
+make install                   # instala nib en ~/go/bin (úsalo desde cualquier repo)
 cp nib ~/.local/bin/           # o cualquier carpeta de tu PATH
 ```
 
@@ -67,6 +69,45 @@ Al marcar archivos, la columna derecha muestra los cinco que más suelen cambiar
 El porcentaje es la proporción de commits del archivo marcado que también tocaron ese otro. El índice se crea solo la primera vez (en un repo grande tarda unos segundos, en segundo plano) y se mantiene al día tras cada commit, checkout o rebase. Si algo falla, el panel se queda en una línea gris y puedes commitear igual.
 
 Con menos de 80 columnas de ancho, la columna derecha se oculta para no estorbar al flujo mínimo.
+
+---
+
+## Comandos dentro del TUI — `/`
+
+Escribe `/` con el mensaje vacío (o haz click en `/ comandos`) para abrir la paleta, teclea unas letras y pulsa `enter`. `esc` te devuelve a la vista de commit. Puedes lanzar nib desde cualquier subcarpeta del repo.
+
+### Revisa tus cambios — `/changes`
+
+![/changes: los archivos cambiados y el diff del seleccionado](assets/changes.png)
+
+A la izquierda los archivos cambiados; a la derecha el archivo entero con lo añadido en verde y lo borrado en rojo. Pensado para revisar lo que ha cambiado un agente o una sesión larga sin abrir un IDE.
+
+| Acción | Teclado | Ratón |
+|---|---|---|
+| Filtrar archivos por ruta | `/` y escribir | click en el buscador |
+| Cambiar de archivo / scroll del diff | `j` / `k` (`tab` cambia de panel) | click · rueda |
+| Cambio siguiente / anterior | `n` / `p` | las marcas de color de la barra |
+| Media página | `ctrl+d` / `ctrl+u` | arrastrar la barra |
+| Marcar el archivo para el commit | `espacio` | — |
+| Editar el archivo en ese cambio | `e` | — |
+
+`e` le pasa la terminal a tu editor, abierto en el cambio que estás viendo, y al salir nib recarga el diff. El editor es `$VISUAL` o `$EDITOR` (p. ej. `export EDITOR=vim` en tu `.zshrc`); si no hay ninguno, `micro`, `nano` o `vi`. nib nunca edita archivos por sí mismo.
+
+### Tus commits por tipo — `/stats`
+
+![/stats: commits por tipo y actividad diaria](assets/stats.png)
+
+Los commits de la rama actual por tipo y su actividad: por día hasta 30 días, por semana a partir de ahí. `d` o un click en el título cambia entre 7 · 30 · 90 · 365 días. Los commits sin prefijo `tipo:` cuentan como `sin tipo`; el culpable habitual es el título de squash de GitHub (`Feat/audit (#13)`), así que ponle a tus PR un título convencional.
+
+### Los archivos que más cambian — `/audit`
+
+![/audit: archivos ordenados por número de commits](assets/audit.png)
+
+Archivos ordenados por **cuántos commits los tocaron** (los hotspots de Adam Tornhill); las líneas cambiadas son solo contexto. Los que pasan el umbral de `/settings` salen como `refactor?` y los que se acercan, `vigilar`. `d` cambia la ventana. Los lockfiles y el build se ignoran; añade tus patrones en un `.auditignore` en la raíz, con el mismo formato que `.nibignore`.
+
+### Apaga lo que no uses — `/settings`
+
+El panel de git log, el de relacionados, la captura del ratón (apagada = selección y scroll nativos de la terminal), el alcance del log (rama actual o todas), cada cuánto se recarga y los valores por defecto de `/audit`. Se aplica al momento y se guarda en `~/.config/nib/settings.toml`.
 
 ---
 
@@ -147,4 +188,4 @@ make ci      # todo lo anterior + cobertura ≥ 80% + integración con git real
 make bench   # microbenchmarks del índice
 ```
 
-Las capturas de este README se generan con [vhs](https://github.com/charmbracelet/vhs) sobre un clon de demo: `vhs assets/tapes/tui.tape` y `vhs assets/tapes/coupled.tape`.
+Las capturas de este README se generan con [vhs](https://github.com/charmbracelet/vhs) sobre un clon de demo: `vhs assets/tapes/<nombre>.tape` (`tui`, `changes`, `stats`, `audit`, `coupled`).

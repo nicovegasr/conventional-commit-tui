@@ -105,6 +105,18 @@ func TestStatsViewShowsTypesAndActivity(t *testing.T) {
 	}
 }
 
+func TestStatsTypesFillTheRowsLeft(t *testing.T) {
+	m := openStatsScreen(t, statsModel(&fakeStats{report: sampleStats}))
+	m.height = statsChromeRows + 3
+	if v := m.View(); strings.Contains(v, "más") {
+		t.Error("three types fit in three free rows")
+	}
+	m.height = statsChromeRows + 2
+	if lines := m.typeLines(100); len(lines) != 2 || !strings.Contains(lines[1], "+2 tipos más") {
+		t.Errorf("two free rows: %q", lines)
+	}
+}
+
 func TestSparklineScalesToTheBusiestBucket(t *testing.T) {
 	if got := sparkline([]int{0, 4, 8}, 1); got != " ▄█" {
 		t.Errorf("sparkline = %q", got)
