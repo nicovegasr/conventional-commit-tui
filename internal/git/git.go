@@ -18,8 +18,10 @@ type FileChange struct {
 }
 
 // Status returns the working-tree changes via `git status --porcelain -z`.
+// Every untracked file is listed, not just its new folder, so each one can be
+// marked and diffed on its own.
 func Status() ([]FileChange, error) {
-	out, err := run("status", "--porcelain", "-z")
+	out, err := run("status", "--porcelain", "-z", "--untracked-files=all")
 	if err != nil {
 		return nil, err
 	}

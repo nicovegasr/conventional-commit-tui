@@ -152,3 +152,15 @@ func TestRootPropagatesError(t *testing.T) {
 		t.Error("expected error outside a repository")
 	}
 }
+
+func TestStatusListsEveryUntrackedFile(t *testing.T) {
+	var gotArgs []string
+	stubRun(t, func(args ...string) (string, error) { gotArgs = args; return "", nil })
+	if _, err := Status(); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"status", "--porcelain", "-z", "--untracked-files=all"}
+	if !reflect.DeepEqual(gotArgs, want) {
+		t.Errorf("Status args = %v, want %v", gotArgs, want)
+	}
+}

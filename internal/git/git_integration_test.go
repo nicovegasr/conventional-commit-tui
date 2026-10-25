@@ -208,3 +208,20 @@ func TestStageFromASubdirectoryAfterMovingToTheRoot(t *testing.T) {
 		t.Errorf("status paths must be stageable from the root: %v", err)
 	}
 }
+
+func TestStatusListsTheFilesOfANewFolder(t *testing.T) {
+	newRepo(t)
+	if err := os.Mkdir("pkg", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, "pkg/a.go", "package pkg\n")
+	writeFile(t, "pkg/b.go", "package pkg\n")
+
+	changes, err := Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 2 || changes[0].Path != "pkg/a.go" {
+		t.Errorf("Status() = %+v, want each file of pkg/", changes)
+	}
+}
