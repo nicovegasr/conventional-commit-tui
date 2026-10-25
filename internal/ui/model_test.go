@@ -89,7 +89,7 @@ func sampleModelWithLogger() (Model, *fakeRepo, *fakeLogger) {
 		{Path: "c.go", Status: 'A', Staged: true},
 	}}
 	lg := &fakeLogger{out: "abc123 feat: x\n"}
-	return New(repo, lg, &fakeHistory{}, &fakeStore{}, &fakeAuditor{}, &fakeDiffer{}, &fakeEditor{}), repo, lg
+	return New(repo, lg, &fakeHistory{}, &fakeStore{}, &fakeAuditor{}, &fakeStats{}, &fakeDiffer{}, &fakeEditor{}), repo, lg
 }
 
 func sampleModel() (Model, *fakeRepo) {
@@ -112,7 +112,7 @@ func TestNewLoadsFilesAndPreMarksStaged(t *testing.T) {
 }
 
 func TestNewPropagatesStatusError(t *testing.T) {
-	m := New(&fakeRepo{statusErr: errors.New("boom")}, &fakeLogger{}, &fakeHistory{}, &fakeStore{}, &fakeAuditor{}, &fakeDiffer{}, &fakeEditor{})
+	m := New(&fakeRepo{statusErr: errors.New("boom")}, &fakeLogger{}, &fakeHistory{}, &fakeStore{}, &fakeAuditor{}, &fakeStats{}, &fakeDiffer{}, &fakeEditor{})
 	if m.err == nil {
 		t.Error("expected err set when Status fails")
 	}
@@ -736,7 +736,7 @@ func historyModel(h *fakeHistory) Model {
 		{Path: "a.go", Status: 'M'},
 		{Path: "b.go", Status: 'M'},
 	}}
-	return New(repo, &fakeLogger{}, h, &fakeStore{}, &fakeAuditor{}, &fakeDiffer{}, &fakeEditor{})
+	return New(repo, &fakeLogger{}, h, &fakeStore{}, &fakeAuditor{}, &fakeStats{}, &fakeDiffer{}, &fakeEditor{})
 }
 
 // run executes cmd and feeds its message back, as the Bubble Tea loop would.
@@ -945,7 +945,7 @@ func longModel() Model {
 	for i := range 40 {
 		files = append(files, git.FileChange{Path: fmt.Sprintf("f%02d.go", i), Status: 'M'})
 	}
-	m := New(&fakeRepo{status: files}, &fakeLogger{}, &fakeHistory{}, &fakeStore{}, &fakeAuditor{}, &fakeDiffer{}, &fakeEditor{})
+	m := New(&fakeRepo{status: files}, &fakeLogger{}, &fakeHistory{}, &fakeStore{}, &fakeAuditor{}, &fakeStats{}, &fakeDiffer{}, &fakeEditor{})
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 20})
 	return next.(Model)
 }

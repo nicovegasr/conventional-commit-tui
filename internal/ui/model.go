@@ -30,6 +30,7 @@ import (
 	"github.com/nicovegasr/nib-git/internal/commit"
 	"github.com/nicovegasr/nib-git/internal/git"
 	"github.com/nicovegasr/nib-git/internal/settings"
+	"github.com/nicovegasr/nib-git/internal/stats"
 )
 
 // Repo is the narrow slice of git the commit flow needs. main.go injects a real
@@ -147,6 +148,14 @@ type Model struct {
 	auditErr     error
 	auditTop     int // first hotspot row shown (scroll)
 
+	stats        StatsReader
+	statsOpen    bool // /stats screen replaces the commit view
+	statsDays    int
+	statsGen     int // numbers reads; answers for an older window are dropped
+	statsLoading bool
+	statsReport  stats.Report
+	statsErr     error
+
 	differ        Differ
 	editor        Editor
 	changesOpen   bool   // /changes screen replaces the commit view
@@ -179,13 +188,14 @@ type Model struct {
 
 // New builds the initial model, loading the settings through store and the
 // working tree through repo. Unreadable settings fall back to the defaults.
-func New(repo Repo, logger Logger, history History, store Store, auditor Auditor, differ Differ, editor Editor) Model {
+func New(repo Repo, logger Logger, history History, store Store, auditor Auditor, statsReader StatsReader, differ Differ, editor Editor) Model {
 	prefs, prefsErr := store.Load()
 	m := Model{
 		repo:        repo,
 		logger:      logger,
 		store:       store,
 		auditor:     auditor,
+		stats:       statsReader,
 		differ:      differ,
 		editor:      editor,
 		prefs:       prefs,
@@ -397,10 +407,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.queryRelated()
 	case relatedLoadedMsg:
 		return m.relatedLoaded(msg)
-	case auditLoadedMsg:
-		return m.auditLoaded(msg), nil
-	case diffLoadedMsg:
-		return m.diffLoaded(msg), nil
+	case auditLoadedMsg, statsLoadedMsg, diffLoadedMsg:
+		return m.screenLoaded(msg), nil
 	case editorClosedMsg:
 		return m.editorClosed(msg)
 	case tea.WindowSizeMsg:
@@ -415,6 +423,19 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// screenLoaded stores an answer read off the UI goroutine for a screen.
+func (m Model) screenLoaded(msg tea.Msg) Model {
+	switch msg := msg.(type) {
+	case auditLoadedMsg:
+		return m.auditLoaded(msg)
+	case statsLoadedMsg:
+		return m.statsLoaded(msg)
+	case diffLoadedMsg:
+		return m.diffLoaded(msg)
+	}
+	return m
+}
+
 func (m Model) updateKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.flash = "" // any keystroke dismisses the success flash
 	if key.String() == "ctrl+c" {
@@ -423,6 +444,8 @@ func (m Model) updateKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case m.changesOpen:
 		return m.updateChanges(key)
+	case m.statsOpen:
+		return m.updateStats(key)
 	case m.auditOpen:
 		return m.updateAudit(key)
 	case m.settingsOpen:
@@ -595,11 +618,19 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case m.changesOpen:
 		return m.clickChanges(msg)
+	case m.statsOpen:
+		return m.clickStats(msg)
 	case m.auditOpen:
 		return m.clickAudit(msg)
 	case m.settingsOpen:
 		return m.clickSettings(msg)
 	}
+	return m.clickCommitView(msg)
+}
+
+// clickCommitView handles the mouse on the commit view: left clicks mapped
+// through hitTest, and the wheel.
+func (m Model) clickCommitView(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
 		return m.scroll(msg.Button == tea.MouseButtonWheelUp), nil
 	}
@@ -1037,6 +1068,8 @@ func (m Model) View() string {
 	switch {
 	case m.changesOpen:
 		return m.changesView()
+	case m.statsOpen:
+		return m.statsView()
 	case m.auditOpen:
 		return m.auditView()
 	case m.settingsOpen:
@@ -1136,7 +1169,7 @@ func (m Model) footer() string {
 		keys = append(keys, bold.Render(pair[0])+" "+dim(pair[1]))
 	}
 	line := ""
-	if !m.changesOpen && !m.auditOpen && !m.settingsOpen { // the palette opens from the commit view only
+	if !m.changesOpen && !m.statsOpen && !m.auditOpen && !m.settingsOpen { // the palette opens from the commit view only
 		line = paint(cyan, commandsButton) + "  "
 	}
 	switch {
@@ -1157,6 +1190,8 @@ func (m Model) helpKeys() [][2]string {
 		return [][2]string{{"escribe", "filtra"}, {"enter", "listo"}}
 	case m.changesOpen:
 		return [][2]string{{"j/k", "mover"}, {"tab", "panel"}, {"n/p", "cambio"}, {"espacio", "marca"}, {"e", "editar"}, {"/", "buscar"}, {"esc", "vuelve"}}
+	case m.statsOpen:
+		return [][2]string{{"d", "ventana"}, {"esc", "vuelve"}}
 	case m.auditOpen:
 		return [][2]string{{"d", "ventana"}, {"j/k", "mover"}, {"esc", "vuelve"}}
 	case m.settingsOpen:

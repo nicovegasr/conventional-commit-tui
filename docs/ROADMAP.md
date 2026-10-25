@@ -90,9 +90,13 @@ than the Source Control panel or lazygit/gitui (both tried, neither fit). It is
   ±lines as context, `refactor?`/`vigilar` against the `/settings` threshold,
   window cycled in-screen (7 · 30 · 90 · 365). No flags; `.auditignore`
   replaces `--exclude` (ADR-0016).
-- [ ] **Phase 6 — `/stats`.** Commit-type breakdown view; later timeline/authors.
-  **Next.**
-- [ ] **Phase 7 — release.** `gh repo create nib-git`, push, tag `v0.1.0`,
+- [x] **Phase 5b — `/changes`.** Diff review screen with search, scrollbar and
+  `n`/`p`; editing delegated to `$EDITOR` (ADR-0017).
+- [x] **Phase 6 — `/stats`.** Commits by type plus an activity row, per day up
+  to 30 days and per week beyond; window cycled in-screen. Authors and scopes
+  later (ADR-0018).
+- [ ] **Phase 7 — release.** **Next.**
+  `gh repo create nib-git`, push, tag `v0.1.0`,
   build/install instructions, maybe `brew`/`go install`.
 
 ## Working style
@@ -102,6 +106,5 @@ history). Conventional Commits in English, trailing period in the subject.
 
 ## Open questions
 
-- `/stats` timeline granularity (per day / per week)?
 - Distribution: `go install`, Homebrew tap, or prebuilt binaries?
 - Does `/audit` v0.2 (commits × file size) need file LOC, or git blame lines?
