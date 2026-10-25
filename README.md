@@ -17,7 +17,8 @@ Built to stay open in the VSCode terminal and commit on the fly.
 1. **One-line commits**: mark files → pick the type → type the message → `enter`. Mouse or keyboard.
 2. **Related files**: what usually changes with the files you marked, and which of those are modified but not marked (the classic forgotten test).
 3. **Analysis from the CLI**: `nib coupled <file>` explains what changes with a file, with percentages and the commits that back them.
-4. **Measured, not promised**: `nib evaluate` checks on real commits whether the suggestions hit. Results below.
+4. **Inside the TUI, one `/` away**: review every diff and jump to your editor (`/changes`), see your commits by type (`/stats`), find the files that change the most (`/audit`), switch the heavy parts off (`/settings`).
+5. **Measured, not promised**: `nib evaluate` checks on real commits whether the suggestions hit. Results below.
 
 Everything is local: nib only reads your repository through `git` and keeps its index inside `.git/`.
 
@@ -68,6 +69,45 @@ When you mark files, the right column shows the five that most often change with
 The percentage is the share of the marked file's commits that also touched the other one. The index is created on first use (a few seconds in the background on a large repository) and kept up to date after every commit, checkout or rebase. If anything fails, the panel collapses to one grey line and you can still commit.
 
 Below 80 columns the right column hides, so it never gets in the way of the minimal flow.
+
+---
+
+## Commands inside the TUI — `/`
+
+Type `/` on an empty message (or click `/ comandos`) to open the palette, type a few letters and press `enter`. `esc` takes you back to the commit view. You can run nib from any subdirectory of the repository.
+
+### Review your changes — `/changes`
+
+![/changes: the changed files and the selected diff](assets/changes.png)
+
+The changed files on the left, the whole selected file on the right with additions in green and deletions in red. Built to review what an agent or a long session changed without opening an IDE.
+
+| Action | Keyboard | Mouse |
+|---|---|---|
+| Filter files by path | `/` and type | click the search box |
+| Change file / scroll the diff | `j` / `k` (`tab` switches pane) | click · wheel |
+| Next / previous change | `n` / `p` | the colored marks on the scrollbar |
+| Jump half a page | `ctrl+d` / `ctrl+u` | drag the scrollbar |
+| Mark the file for the commit | `space` | — |
+| Edit the file at that change | `e` | — |
+
+`e` hands the terminal to your editor, opened at the change you are looking at, and nib reloads the diff when you quit. The editor is `$VISUAL` or `$EDITOR` (e.g. `export EDITOR=vim` in your `.zshrc`), else `micro`, `nano` or `vi`. nib never edits files itself.
+
+### Your commits by type — `/stats`
+
+![/stats: commits by type and daily activity](assets/stats.png)
+
+The current branch's commits by conventional type and their activity: per day up to 30 days, per week beyond. `d` or a click on the title cycles 7 · 30 · 90 · 365 days. Subjects without a `type:` prefix count as `sin tipo` — GitHub's default squash title (`Feat/audit (#13)`) is the usual culprit, so give your PRs a conventional title.
+
+### Files that change the most — `/audit`
+
+![/audit: files ranked by number of commits](assets/audit.png)
+
+Files ranked by **how many commits touched them** (Adam Tornhill's hotspots); lines changed are context only. Files over the `/settings` threshold get `refactor?`, close to it `vigilar`. `d` cycles the window. Lockfiles and build output are skipped; add your own patterns to a `.auditignore` at the root, same format as `.nibignore`.
+
+### Switch things off — `/settings`
+
+The git-log panel, the related-files panel, mouse capture (off = native terminal selection and scroll), the log scope (current branch or all), the auto-reload interval and the `/audit` defaults. Changes apply live and are saved to `~/.config/nib/settings.toml`.
 
 ---
 
@@ -148,4 +188,4 @@ make ci      # all of the above + ≥ 80% coverage + real git integration
 make bench   # index microbenchmarks
 ```
 
-The screenshots in this README are recorded with [vhs](https://github.com/charmbracelet/vhs) on a demo clone: `vhs assets/tapes/tui.tape` and `vhs assets/tapes/coupled.tape`.
+The screenshots in this README are recorded with [vhs](https://github.com/charmbracelet/vhs) on a demo clone: `vhs assets/tapes/<name>.tape` (`tui`, `changes`, `stats`, `audit`, `coupled`).
