@@ -9,6 +9,12 @@ later goal — ADR-0004.)
 
 ### Added
 
+- `/changes` in the command palette: the changed files on the left, filtered
+  by a search box, and the whole selected file on the right with added lines
+  on green and removed on red. A scrollbar marks where the changes are and can
+  be dragged; `n`/`p` jump between changes, `space` marks the file for the
+  commit. `e` opens the file at the change in `$VISUAL`/`$EDITOR` (else
+  `micro`, `nano` or `vi`) and nib reloads when it closes (ADR-0017).
 - `/audit` in the command palette: files ranked by the number of commits
   touching them, with ±lines as context and `refactor?`/`vigilar` against a
   threshold. `d` or a click cycles the window (7 · 30 · 90 · 365 days);

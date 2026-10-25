@@ -150,3 +150,31 @@ func TestCommitErrorCarriesStdoutReason(t *testing.T) {
 		t.Fatalf("Commit() error = %v, want git's explanation", err)
 	}
 }
+
+func TestDiffFileShowsTrackedAndUntrackedChanges(t *testing.T) {
+	newRepo(t)
+	writeFile(t, "a.go", "package a\n\nfunc old() {}\n")
+	if err := Stage([]string{"a.go"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Commit("feat: add a."); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, "a.go", "package a\n\nfunc new() {}\n")
+	writeFile(t, "n.txt", "hi\n")
+
+	d, err := DiffFile(FileChange{Path: "a.go", Status: 'M'})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Lines) != 4 || d.Added != 1 || d.Removed != 1 {
+		t.Errorf("tracked diff = %+v, want the whole file with one change", d)
+	}
+	d, err = DiffFile(FileChange{Path: "n.txt", Status: '?'})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Lines) != 1 || d.Lines[0] != (DiffLine{Kind: Added, Text: "hi", Old: 1, New: 1}) {
+		t.Errorf("untracked diff = %+v", d)
+	}
+}

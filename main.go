@@ -1,7 +1,7 @@
 // Command nib is a fast, terminal-first commit tool (conventional commits TUI).
 //
-// Run with no arguments to open the commit flow. Slash-commands (/audit,
-// /settings) drive the heavier features. See docs/ux-mockups.html for the
+// Run with no arguments to open the commit flow. Slash-commands (/changes,
+// /audit, /settings) drive the heavier features. See docs/ux-mockups.html for the
 // intended UX.
 package main
 
@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 
@@ -17,6 +18,7 @@ import (
 
 	"github.com/nicovegasr/nib-git/internal/audit"
 	"github.com/nicovegasr/nib-git/internal/cli"
+	"github.com/nicovegasr/nib-git/internal/editor"
 	"github.com/nicovegasr/nib-git/internal/git"
 	"github.com/nicovegasr/nib-git/internal/index"
 	"github.com/nicovegasr/nib-git/internal/settings"
@@ -57,6 +59,16 @@ type gitAudit struct{}
 
 func (gitAudit) Audit(days int) (audit.Report, error) { return audit.Run(days) }
 
+// gitDiffer adapts the git package to the ui.Differ port.
+type gitDiffer struct{}
+
+func (gitDiffer) Diff(f git.FileChange) (git.Diff, error) { return git.DiffFile(f) }
+
+// userEditor adapts the editor package to the ui.Editor port.
+type userEditor struct{}
+
+func (userEditor) Command(path string, line int) *exec.Cmd { return editor.Command(path, line) }
+
 // fileStore adapts the settings file to the ui.Store port.
 type fileStore struct{}
 
@@ -86,7 +98,7 @@ func main() {
 		}
 		return
 	}
-	model := ui.New(gitRepo{}, gitLogger{}, indexHistory{ctx: context.Background()}, fileStore{}, gitAudit{})
+	model := ui.New(gitRepo{}, gitLogger{}, indexHistory{ctx: context.Background()}, fileStore{}, gitAudit{}, gitDiffer{}, userEditor{})
 	p := tea.NewProgram(model, tea.WithAltScreen()) // the model enables the mouse from its settings
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "nib:", err)

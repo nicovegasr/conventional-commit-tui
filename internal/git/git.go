@@ -78,13 +78,14 @@ func Log(scope string, limit int) (string, error) {
 }
 
 // run executes git with the given args. It is a package var so tests can stub
-// the shell-out and exercise the parsing without a real repository.
+// the shell-out and exercise the parsing without a real repository. A failure
+// still returns stdout: `diff --no-index` exits 1 just to say files differ.
 var run = func(args ...string) (string, error) {
 	var stdout, stderr bytes.Buffer
 	cmd := exec.Command("git", args...)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return "", failure(args[0], err, stdout.String(), stderr.String())
+		return stdout.String(), failure(args[0], err, stdout.String(), stderr.String())
 	}
 	return stdout.String(), nil
 }
