@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nicovegasr/nib-git/internal/pathignore"
+	"github.com/nicovegasr/conventional-commit-tui/internal/pathignore"
 	bolt "go.etcd.io/bbolt"
 )
 

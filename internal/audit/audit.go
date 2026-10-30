@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nicovegasr/nib-git/internal/pathignore"
+	"github.com/nicovegasr/conventional-commit-tui/internal/pathignore"
 )
 
 // Hotspot is one file ranked by change frequency.

@@ -1,4 +1,4 @@
-# nib-git — developer tasks.
+# conventional-commit-tui — developer tasks.
 # Single source of truth for the quality gate. lefthook (pre-commit) and CI
 # both call these targets; never duplicate the commands elsewhere.
 

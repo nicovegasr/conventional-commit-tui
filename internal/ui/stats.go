@@ -10,8 +10,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/nicovegasr/nib-git/internal/settings"
-	"github.com/nicovegasr/nib-git/internal/stats"
+	"github.com/nicovegasr/conventional-commit-tui/internal/settings"
+	"github.com/nicovegasr/conventional-commit-tui/internal/stats"
 )
 
 // StatsReader is the narrow slice of the stats package the /stats screen needs.

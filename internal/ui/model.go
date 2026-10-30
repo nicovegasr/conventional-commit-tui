@@ -26,11 +26,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/nicovegasr/nib-git/internal/audit"
-	"github.com/nicovegasr/nib-git/internal/commit"
-	"github.com/nicovegasr/nib-git/internal/git"
-	"github.com/nicovegasr/nib-git/internal/settings"
-	"github.com/nicovegasr/nib-git/internal/stats"
+	"github.com/nicovegasr/conventional-commit-tui/internal/audit"
+	"github.com/nicovegasr/conventional-commit-tui/internal/commit"
+	"github.com/nicovegasr/conventional-commit-tui/internal/git"
+	"github.com/nicovegasr/conventional-commit-tui/internal/settings"
+	"github.com/nicovegasr/conventional-commit-tui/internal/stats"
 )
 
 // Repo is the narrow slice of git the commit flow needs. main.go injects a real

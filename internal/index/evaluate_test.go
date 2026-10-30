@@ -9,7 +9,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/nicovegasr/nib-git/internal/history"
+	"github.com/nicovegasr/conventional-commit-tui/internal/history"
 )
 
 func TestScoreCountsEmptySlotsAgainstThePredictor(t *testing.T) {

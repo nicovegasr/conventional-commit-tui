@@ -1,4 +1,4 @@
-# nib-git — Claude Code project guide
+# conventional-commit-tui — Claude Code project guide
 
 `nib` is a fast, **terminal-first** commit tool for conventional commits — a
 lighter "git IDE" you keep open in the VSCode terminal to commit on the fly.

@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/nicovegasr/nib-git/internal/git"
+	"github.com/nicovegasr/conventional-commit-tui/internal/git"
 )
 
 // Differ is the narrow slice of git the diff pane needs.

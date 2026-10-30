@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nicovegasr/nib-git/internal/stats"
+	"github.com/nicovegasr/conventional-commit-tui/internal/stats"
 )
 
 // fakeStats answers every window with report and records the last one.

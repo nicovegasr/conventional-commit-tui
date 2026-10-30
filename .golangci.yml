@@ -1,4 +1,4 @@
-# golangci-lint configuration for nib-git.
+# golangci-lint configuration for conventional-commit-tui.
 # "Recommended" linter set: enforces naming, unhandled errors, dead code and
 # bounded complexity without the noise of the strict set.
 version: "2"

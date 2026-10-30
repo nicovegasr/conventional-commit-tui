@@ -1,4 +1,4 @@
-module github.com/nicovegasr/nib-git
+module github.com/nicovegasr/conventional-commit-tui
 
 go 1.26
 

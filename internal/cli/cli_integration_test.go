@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nicovegasr/nib-git/internal/history"
-	"github.com/nicovegasr/nib-git/internal/index"
+	"github.com/nicovegasr/conventional-commit-tui/internal/history"
+	"github.com/nicovegasr/conventional-commit-tui/internal/index"
 )
 
 func git(t *testing.T, dir string, args ...string) string {
