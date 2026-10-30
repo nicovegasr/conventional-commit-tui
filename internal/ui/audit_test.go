@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/nicovegasr/nib-git/internal/audit"
+	"github.com/nicovegasr/conventional-commit-tui/internal/audit"
 )
 
 // fakeAuditor answers every window with report and records the last one.

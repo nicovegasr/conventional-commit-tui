@@ -9,8 +9,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/nicovegasr/nib-git/internal/commit"
-	"github.com/nicovegasr/nib-git/internal/git"
+	"github.com/nicovegasr/conventional-commit-tui/internal/commit"
+	"github.com/nicovegasr/conventional-commit-tui/internal/git"
 )
 
 // fakeRepo is a trivial in-memory Repo for testing model transitions.

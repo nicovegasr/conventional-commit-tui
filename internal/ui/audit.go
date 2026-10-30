@@ -8,8 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/nicovegasr/nib-git/internal/audit"
-	"github.com/nicovegasr/nib-git/internal/settings"
+	"github.com/nicovegasr/conventional-commit-tui/internal/audit"
+	"github.com/nicovegasr/conventional-commit-tui/internal/settings"
 )
 
 // Auditor is the narrow slice of the audit package the /audit screen needs.

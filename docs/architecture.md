@@ -26,7 +26,7 @@ prerequisite for developing the analytical core.
 
 ## Existing commit TUI
 
-A human-readable map of nib-git. For the *why* behind decisions, see
+A human-readable map of conventional-commit-tui. For the *why* behind decisions, see
 [`adr/`](adr/). For build/test commands, see [`contributing.md`](contributing.md).
 
 ## Big picture

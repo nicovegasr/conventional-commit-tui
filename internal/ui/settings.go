@@ -8,7 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/nicovegasr/nib-git/internal/settings"
+	"github.com/nicovegasr/conventional-commit-tui/internal/settings"
 )
 
 const commandsButton = "/ comandos"

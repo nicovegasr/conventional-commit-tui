@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to nib-git are documented here. Format follows
+All notable changes to conventional-commit-tui are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versioning is
 [SemVer](https://semver.org/). (Auto-derivation from conventional commits is a
 later goal — ADR-0004.)

@@ -17,14 +17,14 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/nicovegasr/nib-git/internal/audit"
-	"github.com/nicovegasr/nib-git/internal/cli"
-	"github.com/nicovegasr/nib-git/internal/editor"
-	"github.com/nicovegasr/nib-git/internal/git"
-	"github.com/nicovegasr/nib-git/internal/index"
-	"github.com/nicovegasr/nib-git/internal/settings"
-	"github.com/nicovegasr/nib-git/internal/stats"
-	"github.com/nicovegasr/nib-git/internal/ui"
+	"github.com/nicovegasr/conventional-commit-tui/internal/audit"
+	"github.com/nicovegasr/conventional-commit-tui/internal/cli"
+	"github.com/nicovegasr/conventional-commit-tui/internal/editor"
+	"github.com/nicovegasr/conventional-commit-tui/internal/git"
+	"github.com/nicovegasr/conventional-commit-tui/internal/index"
+	"github.com/nicovegasr/conventional-commit-tui/internal/settings"
+	"github.com/nicovegasr/conventional-commit-tui/internal/stats"
+	"github.com/nicovegasr/conventional-commit-tui/internal/ui"
 )
 
 // gitRepo adapts the git package to the ui.Repo port injected into the model.

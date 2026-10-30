@@ -8,8 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/nicovegasr/nib-git/internal/git"
-	"github.com/nicovegasr/nib-git/internal/settings"
+	"github.com/nicovegasr/conventional-commit-tui/internal/git"
+	"github.com/nicovegasr/conventional-commit-tui/internal/settings"
 )
 
 // fakeStore serves prefs (Default() when unset) and records saves.

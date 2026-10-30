@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/nicovegasr/nib-git/internal/history"
+	"github.com/nicovegasr/conventional-commit-tui/internal/history"
 )
 
 func benchmarkSource(count int) fakeSource {

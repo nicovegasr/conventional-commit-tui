@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/nicovegasr/nib-git/internal/history"
+	"github.com/nicovegasr/conventional-commit-tui/internal/history"
 	bolt "go.etcd.io/bbolt"
 )
 

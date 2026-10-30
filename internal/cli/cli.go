@@ -13,9 +13,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/nicovegasr/nib-git/internal/history"
-	"github.com/nicovegasr/nib-git/internal/index"
-	"github.com/nicovegasr/nib-git/internal/pathignore"
+	"github.com/nicovegasr/conventional-commit-tui/internal/history"
+	"github.com/nicovegasr/conventional-commit-tui/internal/index"
+	"github.com/nicovegasr/conventional-commit-tui/internal/pathignore"
 )
 
 const usage = `Usage:

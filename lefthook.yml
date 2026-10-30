@@ -1,4 +1,4 @@
-# Git hooks for nib-git (versioned via lefthook).
+# Git hooks for conventional-commit-tui (versioned via lefthook).
 # Run `make tools` once to install lefthook and wire the hooks.
 #
 # pre-commit runs the fast gate. The coverage gate (make cover) runs in CI,

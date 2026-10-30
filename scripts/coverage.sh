@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Per-package coverage gate for nib-git domain packages.
+# Per-package coverage gate for conventional-commit-tui domain packages.
 #
 # Fails if ANY domain package falls below THRESHOLD%. Coverage is measured
 # per package (not globally) so a well-covered package can never mask a

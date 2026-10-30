@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nicovegasr/nib-git/internal/index"
+	"github.com/nicovegasr/conventional-commit-tui/internal/index"
 )
 
 func TestHelpDoesNotNeedRepository(t *testing.T) {

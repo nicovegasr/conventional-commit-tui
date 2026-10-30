@@ -2,7 +2,7 @@
 
 **English** · [Español](README.es.md)
 
-![CI](https://github.com/nicovegasr/nib-git/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/nicovegasr/conventional-commit-tui/actions/workflows/ci.yml/badge.svg)
 
 A terminal tool to write [Conventional Commits](https://www.conventionalcommits.org/) in one line and **not forget anything**: while you mark files, nib tells you which other files usually change with them, according to the repository's git history.
 
@@ -29,8 +29,8 @@ Everything is local: nib only reads your repository through `git` and keeps its 
 Requires Go 1.26+ and git.
 
 ```bash
-git clone https://github.com/nicovegasr/nib-git
-cd nib-git
+git clone https://github.com/nicovegasr/conventional-commit-tui
+cd conventional-commit-tui
 make build                     # builds ./nib
 make install                   # installs nib into ~/go/bin (run it from any repo)
 cp nib ~/.local/bin/           # or any folder on your PATH
